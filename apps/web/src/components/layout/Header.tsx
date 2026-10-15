@@ -7,7 +7,12 @@ const navigation = [
   { label: "Campeonatos", href: "#campeonatos" },
 ];
 
-export function Header() {
+interface HeaderProps {
+  onLoginClick: () => void;
+  onRegisterClick: () => void;
+}
+
+export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -44,6 +49,7 @@ export function Header() {
           <button
             type="button"
             className="rounded-lg border border-zinc-700 px-5 py-2.5 font-semibold text-white transition hover:border-red-600"
+            onClick={onLoginClick}
           >
             Entrar
           </button>
@@ -51,6 +57,7 @@ export function Header() {
           <button
             type="button"
             className="rounded-lg bg-red-600 px-5 py-2.5 font-semibold text-white transition hover:bg-red-700"
+            onClick={onRegisterClick}
           >
             Criar conta
           </button>

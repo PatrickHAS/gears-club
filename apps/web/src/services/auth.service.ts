@@ -18,6 +18,19 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
+export interface RegisterCredentials {
+  username: string;
+  email: string;
+  password: string;
+}
+
+export interface RegisterResponse {
+  id: string;
+  username: string;
+  email: string;
+  createdAt: string;
+}
+
 export async function login(
   credentials: LoginCredentials,
 ): Promise<LoginResponse> {
@@ -38,4 +51,30 @@ export async function login(
   }
 
   return response.json() as Promise<LoginResponse>;
+}
+
+export async function register(
+  credentials: RegisterCredentials,
+): Promise<RegisterResponse> {
+  const response = await fetch(`${API_URL}/users/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(credentials),
+  });
+
+  if (!response.ok) {
+    if (response.status === 409) {
+      throw new Error("Este e-mail ou nome de jogador já está cadastrado.");
+    }
+
+    if (response.status === 400) {
+      throw new Error("Dados inválidos. Confira o nome, e-mail e senha.");
+    }
+
+    throw new Error("Não foi possível criar sua conta. Tente novamente.");
+  }
+
+  return response.json() as Promise<RegisterResponse>;
 }

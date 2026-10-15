@@ -5,9 +5,10 @@ import { Footer } from "./components/layout/Footer";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import type { AuthUser } from "./services/auth.service";
+import { Register } from "./pages/Register";
 
 function App() {
-  const [page, setPage] = useState<"home" | "login">("home");
+  const [page, setPage] = useState<"home" | "login" | "register">("home");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
 
@@ -22,13 +23,27 @@ function App() {
     setAccessToken(null);
   }
 
+  if (page === "register") {
+    return (
+      <Register
+        onBack={() => setPage("home")}
+        onSuccess={() => {
+          setPage("login");
+        }}
+      />
+    );
+  }
+
   if (page === "login") {
     return <Login onLogin={handleLogin} onBack={() => setPage("home")} />;
   }
 
   return (
     <>
-      <Header />
+      <Header
+        onLoginClick={() => setPage("login")}
+        onRegisterClick={() => setPage("register")}
+      />
 
       {user ? (
         <div className="border-b border-red-900 bg-zinc-950 px-6 py-3 text-center text-sm text-white">
