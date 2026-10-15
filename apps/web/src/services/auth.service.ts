@@ -36,6 +36,7 @@ export async function login(
 ): Promise<LoginResponse> {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -77,4 +78,47 @@ export async function register(
   }
 
   return response.json() as Promise<RegisterResponse>;
+}
+
+let pendingRefresh: Promise<LoginResponse> | null = null;
+
+export function refreshSession(): Promise<LoginResponse> {
+  if (pendingRefresh) {
+    return pendingRefresh;
+  }
+
+  pendingRefresh = (async () => {
+    const response = await fetch(
+      `${import.meta.env.VITE_API_URL}/auth/refresh`,
+      {
+        method: "POST",
+        credentials: "include",
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error("Sessão expirada ou inválida.");
+    }
+
+    return response.json() as Promise<LoginResponse>;
+  })();
+
+  void pendingRefresh
+    .finally(() => {
+      pendingRefresh = null;
+    })
+    .catch(() => {});
+
+  return pendingRefresh;
+}
+
+export async function logoutSession(): Promise<void> {
+  const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error("Não foi possível encerrar a sessão.");
+  }
 }

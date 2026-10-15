@@ -15,11 +15,33 @@ interface HeaderProps {
 
 export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+
   const { user, isAuthenticated, signOut } = useAuth();
+
+  function handleLogin() {
+    setMenuOpen(false);
+    onLoginClick();
+  }
+
+  function handleRegister() {
+    setMenuOpen(false);
+    onRegisterClick();
+  }
+
+  async function handleLogout() {
+    setMenuOpen(false);
+    await signOut();
+  }
+
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-800 bg-[#101014]/95 backdrop-blur-md">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
-        <a href="#inicio" className="flex items-center gap-3">
+        {/* Logo */}
+        <a
+          href="#inicio"
+          onClick={() => setMenuOpen(false)}
+          className="flex items-center gap-3"
+        >
           <img
             src="/gears-club-logo.png"
             alt="Gears Club"
@@ -31,6 +53,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
           </span>
         </a>
 
+        {/* Navegação desktop */}
         <nav
           aria-label="Navegação principal"
           className="hidden items-center gap-8 lg:flex"
@@ -46,6 +69,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
           ))}
         </nav>
 
+        {/* Autenticação desktop */}
         <div className="hidden items-center gap-4 lg:flex">
           {isAuthenticated && user ? (
             <div className="flex items-center gap-4">
@@ -61,7 +85,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
 
               <button
                 type="button"
-                onClick={signOut}
+                onClick={() => void handleLogout()}
                 className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-red-700 hover:text-white"
               >
                 Sair
@@ -71,7 +95,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={onLoginClick}
+                onClick={handleLogin}
                 className="rounded-lg px-4 py-2 text-sm font-semibold text-zinc-300 transition hover:text-white"
               >
                 Entrar
@@ -79,7 +103,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
 
               <button
                 type="button"
-                onClick={onRegisterClick}
+                onClick={handleRegister}
                 className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600"
               >
                 Criar conta
@@ -88,6 +112,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
           )}
         </div>
 
+        {/* Botão menu mobile */}
         <button
           type="button"
           className="rounded-lg border border-zinc-700 p-2 text-white lg:hidden"
@@ -100,6 +125,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
         </button>
       </div>
 
+      {/* Menu mobile */}
       {menuOpen && (
         <nav
           id="mobile-navigation"
@@ -107,6 +133,7 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
           className="border-t border-zinc-800 bg-[#101014] px-6 py-5 lg:hidden"
         >
           <div className="flex flex-col gap-5">
+            {/* Links */}
             {navigation.map((item) => (
               <a
                 key={item.label}
@@ -118,20 +145,57 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
               </a>
             ))}
 
-            <div className="flex gap-3 border-t border-zinc-800 pt-5">
-              <button
-                type="button"
-                className="flex-1 rounded-lg border border-zinc-700 px-4 py-3 font-semibold"
-              >
-                Entrar
-              </button>
+            {/* Autenticação mobile */}
+            <div className="border-t border-zinc-800 pt-5">
+              {isAuthenticated && user ? (
+                <div className="flex flex-col gap-4">
+                  {/* Jogador conectado */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-red-700 bg-red-950 text-lg font-bold text-red-400">
+                      {user.username.charAt(0).toUpperCase()}
+                    </div>
 
-              <button
-                type="button"
-                className="flex-1 rounded-lg bg-red-600 px-4 py-3 font-semibold"
-              >
-                Criar conta
-              </button>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-zinc-400">
+                        Jogador conectado
+                      </p>
+
+                      <p className="truncate font-bold text-white">
+                        {user.username}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Logout */}
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout()}
+                    className="w-full rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 font-semibold text-red-400 transition hover:bg-red-900/50 hover:text-white"
+                  >
+                    Sair da conta
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-3">
+                  {/* Login */}
+                  <button
+                    type="button"
+                    onClick={handleLogin}
+                    className="flex-1 rounded-lg border border-zinc-700 px-4 py-3 font-semibold text-white transition hover:border-red-600"
+                  >
+                    Entrar
+                  </button>
+
+                  {/* Cadastro */}
+                  <button
+                    type="button"
+                    onClick={handleRegister}
+                    className="flex-1 rounded-lg bg-red-600 px-4 py-3 font-semibold text-white transition hover:bg-red-500"
+                  >
+                    Criar conta
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </nav>
