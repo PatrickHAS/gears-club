@@ -2,40 +2,33 @@ import { useState } from "react";
 
 import { Header } from "./components/layout/Header";
 import { Footer } from "./components/layout/Footer";
+
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
-import type { AuthUser } from "./services/auth.service";
 import { Register } from "./pages/Register";
 
+import { useAuth } from "./contexts/AuthContext";
+
+type Page = "home" | "login" | "register";
+
 function App() {
-  const [page, setPage] = useState<"home" | "login" | "register">("home");
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [page, setPage] = useState<Page>("home");
 
-  function handleLogin(authUser: AuthUser, token: string) {
-    setUser(authUser);
-    setAccessToken(token);
-    setPage("home");
-  }
+  const { user, isAuthenticated, signOut } = useAuth();
 
-  function handleLogout() {
-    setUser(null);
-    setAccessToken(null);
+  if (page === "login") {
+    return (
+      <Login onBack={() => setPage("home")} onSuccess={() => setPage("home")} />
+    );
   }
 
   if (page === "register") {
     return (
       <Register
         onBack={() => setPage("home")}
-        onSuccess={() => {
-          setPage("login");
-        }}
+        onSuccess={() => setPage("login")}
       />
     );
-  }
-
-  if (page === "login") {
-    return <Login onLogin={handleLogin} onBack={() => setPage("home")} />;
   }
 
   return (
@@ -45,13 +38,13 @@ function App() {
         onRegisterClick={() => setPage("register")}
       />
 
-      {user ? (
+      {isAuthenticated && user ? (
         <div className="border-b border-red-900 bg-zinc-950 px-6 py-3 text-center text-sm text-white">
           Bem-vindo à arena,{" "}
           <strong className="text-red-500">{user.username}</strong>!
           <button
             type="button"
-            onClick={handleLogout}
+            onClick={signOut}
             className="ml-4 text-zinc-400 underline hover:text-white"
           >
             Sair

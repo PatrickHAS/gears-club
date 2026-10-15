@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { login, type AuthUser } from "../services/auth.service";
+import { login } from "../services/auth.service";
+import { useAuth } from "../contexts/AuthContext";
 
 interface LoginProps {
-  onLogin: (user: AuthUser, token: string) => void;
+  onSuccess: () => void;
   onBack: () => void;
 }
 
-export function Login({ onLogin, onBack }: LoginProps) {
+export function Login({ onSuccess, onBack }: LoginProps) {
+  const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -19,7 +21,8 @@ export function Login({ onLogin, onBack }: LoginProps) {
 
     try {
       const result = await login({ email, password });
-      onLogin(result.user, result.accessToken);
+      signIn(result);
+      onSuccess();
     } catch (err) {
       setError(
         err instanceof Error
