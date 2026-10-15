@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useAuth } from "../../contexts/AuthContext";
 
 const navigation = [
   { label: "Início", href: "#inicio" },
@@ -14,7 +15,7 @@ interface HeaderProps {
 
 export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-
+  const { user, isAuthenticated, signOut } = useAuth();
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-800 bg-[#101014]/95 backdrop-blur-md">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
@@ -46,21 +47,45 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
         </nav>
 
         <div className="hidden items-center gap-4 lg:flex">
-          <button
-            type="button"
-            className="rounded-lg border border-zinc-700 px-5 py-2.5 font-semibold text-white transition hover:border-red-600"
-            onClick={onLoginClick}
-          >
-            Entrar
-          </button>
+          {isAuthenticated && user ? (
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full border border-red-700 bg-red-950 text-sm font-bold text-red-400">
+                  {user.username.charAt(0).toUpperCase()}
+                </div>
 
-          <button
-            type="button"
-            className="rounded-lg bg-red-600 px-5 py-2.5 font-semibold text-white transition hover:bg-red-700"
-            onClick={onRegisterClick}
-          >
-            Criar conta
-          </button>
+                <span className="text-sm font-semibold text-white">
+                  {user.username}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={signOut}
+                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-red-700 hover:text-white"
+              >
+                Sair
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onLoginClick}
+                className="rounded-lg px-4 py-2 text-sm font-semibold text-zinc-300 transition hover:text-white"
+              >
+                Entrar
+              </button>
+
+              <button
+                type="button"
+                onClick={onRegisterClick}
+                className="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-600"
+              >
+                Criar conta
+              </button>
+            </div>
+          )}
         </div>
 
         <button
