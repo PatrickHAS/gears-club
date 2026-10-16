@@ -17,7 +17,27 @@ export interface UpdatePlayerProfileData {
 
 async function handleResponse(response: Response): Promise<PlayerProfile> {
   if (!response.ok) {
-    throw new Error(`Erro na API: ${response.status}`);
+    if (response.status === 401) {
+      throw new Error("Sua sessão expirou. Faça login novamente.");
+    }
+
+    if (response.status === 409) {
+      throw new Error("Esta gamertag já está cadastrada. Escolha outra.");
+    }
+
+    if (response.status === 400) {
+      throw new Error(
+        "Os dados informados são inválidos. Verifique os campos.",
+      );
+    }
+
+    if (response.status >= 500) {
+      throw new Error(
+        "O servidor está indisponível. Tente novamente mais tarde.",
+      );
+    }
+
+    throw new Error("Não foi possível concluir a operação. Tente novamente.");
   }
 
   return (await response.json()) as PlayerProfile;
