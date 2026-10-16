@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Header } from "./components/layout/Header";
 import { Footer } from "./components/layout/Footer";
@@ -8,13 +8,35 @@ import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Profile } from "./pages/Profile";
+import Ranking from "./pages/Ranking";
 
-type Page = "home" | "login" | "register" | "profile";
+type Page = "home" | "login" | "register" | "profile" | "ranking";
 
 function App() {
   const [page, setPage] = useState<Page>("home");
-
   const { isLoading, isAuthenticated } = useAuth();
+
+  const [homeSection, setHomeSection] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (page !== "home" || !homeSection) return;
+
+    const section = document.getElementById(homeSection);
+
+    if (section) {
+      section.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+
+      setHomeSection(null);
+    }
+  }, [page, homeSection]);
+
+  function navigateToHomeSection(section: string) {
+    setHomeSection(section);
+    setPage("home");
+  }
 
   if (isLoading) {
     return (
@@ -41,26 +63,46 @@ function App() {
     );
   }
 
-  const currentPage =
-    page === "profile" && isAuthenticated ? "profile" : "home";
+  function renderPage() {
+    switch (page) {
+      case "ranking":
+        return <Ranking />;
+
+      case "profile":
+        return isAuthenticated ? (
+          <Profile onBack={() => setPage("home")} />
+        ) : (
+          <Home />
+        );
+
+      case "home":
+      default:
+        return <Home />;
+    }
+  }
 
   return (
-    <>
+    <div className="flex min-h-screen flex-col bg-[#101014]">
       <Header
         onLoginClick={() => setPage("login")}
         onRegisterClick={() => setPage("register")}
         onProfileClick={() => setPage("profile")}
-        onHomeClick={() => setPage("home")}
+        onHomeClick={() => {
+          setPage("home");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        onRankingClick={() => {
+          setPage("ranking");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        onMatchesClick={() => navigateToHomeSection("partidas")}
+        onChampionshipsClick={() => navigateToHomeSection("campeonatos")}
       />
 
-      {currentPage === "profile" ? (
-        <Profile onBack={() => setPage("home")} />
-      ) : (
-        <Home />
-      )}
+      {renderPage()}
 
       <Footer />
-    </>
+    </div>
   );
 }
 

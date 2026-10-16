@@ -13,6 +13,9 @@ interface HeaderProps {
   onRegisterClick: () => void;
   onProfileClick: () => void;
   onHomeClick: () => void;
+  onRankingClick: () => void;
+  onMatchesClick: () => void;
+  onChampionshipsClick: () => void;
 }
 
 export function Header({
@@ -20,6 +23,9 @@ export function Header({
   onRegisterClick,
   onProfileClick,
   onHomeClick,
+  onRankingClick,
+  onMatchesClick,
+  onChampionshipsClick,
 }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -43,6 +49,21 @@ export function Header({
   function handleHome() {
     setMenuOpen(false);
     onHomeClick();
+  }
+
+  function handleRanking() {
+    setMenuOpen(false);
+    onRankingClick();
+  }
+
+  function handleMatches() {
+    setMenuOpen(false);
+    onMatchesClick();
+  }
+
+  function handleChampionships() {
+    setMenuOpen(false);
+    onChampionshipsClick();
   }
 
   async function handleLogout() {
@@ -82,6 +103,27 @@ export function Header({
             <a
               key={item.label}
               href={item.href}
+              onClick={(event) => {
+                event.preventDefault();
+
+                switch (item.label) {
+                  case "Início":
+                    handleHome();
+                    break;
+
+                  case "Ranking":
+                    handleRanking();
+                    break;
+
+                  case "Partidas":
+                    handleMatches();
+                    break;
+
+                  case "Campeonatos":
+                    handleChampionships();
+                    break;
+                }
+              }}
               className="text-sm font-semibold text-zinc-400 transition hover:text-red-500"
             >
               {item.label}
@@ -162,11 +204,32 @@ export function Header({
         >
           <div className="flex flex-col gap-5">
             {/* Links */}
+
             {navigation.map((item) => (
               <a
                 key={item.label}
                 href={item.href}
-                onClick={() => setMenuOpen(false)}
+                onClick={(event) => {
+                  event.preventDefault();
+
+                  switch (item.label) {
+                    case "Início":
+                      handleHome();
+                      break;
+
+                    case "Ranking":
+                      handleRanking();
+                      break;
+
+                    case "Partidas":
+                      handleMatches();
+                      break;
+
+                    case "Campeonatos":
+                      handleChampionships();
+                      break;
+                  }
+                }}
                 className="font-semibold text-zinc-300 hover:text-red-500"
               >
                 {item.label}
