@@ -10,6 +10,7 @@ import { PlayersModule } from './players/players.module.js';
 import { RatingsModule } from './ratings/ratings.module.js';
 import { MatchmakingModule } from './matchmaking/matchmaking.module.js';
 import { RedisModule } from './redis/redis.module.js';
+import { MatchesModule } from './matches/matches.module.js';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { RedisModule } from './redis/redis.module.js';
     RatingsModule,
     MatchmakingModule,
     RedisModule,
+    MatchesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

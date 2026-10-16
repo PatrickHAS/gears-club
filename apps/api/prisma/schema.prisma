@@ -54,6 +54,7 @@ model PlayerProfile {
   user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   rating             PlayerRating?
   matchmakingRegions PlayerMatchmakingRegion[]
+  matchParticipants  MatchParticipant[]
 
   @@map("player_profiles")
 }
@@ -88,4 +89,56 @@ model PlayerMatchmakingRegion {
   @@unique([playerProfileId, country])
   @@index([country])
   @@map("player_matchmaking_regions")
+}
+
+enum MatchStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DISPUTED
+  CANCELLED
+}
+
+enum MatchTeam {
+  COG
+  LOCUST
+}
+
+model Match {
+  id String @id @default(uuid())
+
+  mode   String @default("DEMOLITION")
+  region String @db.VarChar(2)
+
+  status MatchStatus @default(PENDING)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  participants MatchParticipant[]
+
+  @@index([status, createdAt])
+  @@index([region])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id String @id @default(uuid())
+
+  matchId         String
+  playerProfileId String
+
+  team MatchTeam
+
+  createdAt DateTime @default(now())
+
+  match         Match         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  playerProfile PlayerProfile @relation(fields: [playerProfileId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, playerProfileId])
+  @@index([playerProfileId])
+  @@index([matchId, team])
+  @@map("match_participants")
 }

@@ -425,4 +425,83 @@ export class MatchmakingQueueService {
       );
     }
   }
+
+  async releaseReservation(
+    userIds: string[],
+    reservationId: string,
+  ): Promise<boolean> {
+    if (
+      userIds.length !== 8 ||
+      new Set(userIds).size !== 8 ||
+      userIds.some((id) => !id.trim()) ||
+      !reservationId.trim()
+    ) {
+      throw new BadRequestException(
+        'A liberação exige 8 jogadores distintos e uma reserva válida.',
+      );
+    }
+
+    const reservationKey = `matchmaking:reservation:${reservationId}`;
+
+    const playerReservationKeys = userIds.map((userId) =>
+      this.getPlayerReservationKey(userId),
+    );
+
+    try {
+      const result = await this.redis.getClient().eval(
+        `
+          -- Confirma que a reserva principal existe.
+          local reservationData = redis.call('GET', KEYS[1])
+          if not reservationData then
+            return 0
+          end
+          -- Confirma que os oito jogadores pertencem à reserva.
+          local reservation = cjson.decode(reservationData)
+          if type(reservation.userIds) ~= 'table'
+            or #reservation.userIds ~= 8 then
+            return 0
+          end
+          local expectedPlayers = {}
+          -- Registra os jogadores da reserva.
+          for _, userId in ipairs(reservation.userIds) do
+            if expectedPlayers[userId] then
+              return 0
+            end
+            expectedPlayers[userId] = true
+          end
+          -- Confirma que os jogadores recebidos são os mesmos.
+          for i = 2, 9 do
+            local userId = ARGV[i]
+            if not expectedPlayers[userId] then
+              return 0
+            end
+            expectedPlayers[userId] = nil
+          end
+          -- Confirma que todos os bloqueios pertencem à reserva.
+          for i = 2, 9 do
+            if redis.call('GET', KEYS[i]) ~= ARGV[1] then
+              return 0
+            end
+          end
+          -- Remove os oito bloqueios individuais.
+          for i = 2, 9 do
+            redis.call('DEL', KEYS[i])
+          end
+          -- Remove a reserva principal.
+          redis.call('DEL', KEYS[1])
+          return 1
+      `,
+        {
+          keys: [reservationKey, ...playerReservationKeys],
+          arguments: [reservationId, ...userIds],
+        },
+      );
+
+      return result === 1;
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível liberar a reserva de matchmaking.',
+      );
+    }
+  }
 }

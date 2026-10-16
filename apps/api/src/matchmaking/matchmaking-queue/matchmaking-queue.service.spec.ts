@@ -305,4 +305,57 @@ describe('MatchmakingQueueService', () => {
 
     expect(evalMock).not.toHaveBeenCalled();
   });
+
+  it('deve liberar uma reserva válida', async () => {
+    const userIds = Array.from(
+      { length: 8 },
+      (_, index) => `user-${index + 1}`,
+    );
+
+    evalMock.mockResolvedValue(1);
+
+    const result = await service.releaseReservation(userIds, 'reserva-123');
+
+    expect(result).toBe(true);
+
+    expect(evalMock).toHaveBeenCalledWith(
+      expect.stringContaining('cjson.decode'),
+      {
+        keys: [
+          'matchmaking:reservation:reserva-123',
+          ...userIds.map((id) => `matchmaking:player:reservation:${id}`),
+        ],
+        arguments: ['reserva-123', ...userIds],
+      },
+    );
+  });
+
+  it('não deve liberar uma reserva inexistente ou incompatível', async () => {
+    const userIds = Array.from(
+      { length: 8 },
+      (_, index) => `user-${index + 1}`,
+    );
+
+    evalMock.mockResolvedValue(0);
+
+    const result = await service.releaseReservation(
+      userIds,
+      'reserva-inexistente',
+    );
+
+    expect(result).toBe(false);
+  });
+
+  it('deve informar erro quando o Redis falhar na liberação', async () => {
+    const userIds = Array.from(
+      { length: 8 },
+      (_, index) => `user-${index + 1}`,
+    );
+
+    evalMock.mockRejectedValue(new Error('Redis indisponível'));
+
+    await expect(
+      service.releaseReservation(userIds, 'reserva-123'),
+    ).rejects.toThrow('Não foi possível liberar a reserva de matchmaking.');
+  });
 });
