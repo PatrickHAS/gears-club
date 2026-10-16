@@ -1,4 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 
 import { Header } from "./components/layout/Header";
 import { Footer } from "./components/layout/Footer";
@@ -10,33 +17,31 @@ import { Register } from "./pages/Register";
 import { Profile } from "./pages/Profile";
 import Ranking from "./pages/Ranking";
 
-type Page = "home" | "login" | "register" | "profile" | "ranking";
-
-function App() {
-  const [page, setPage] = useState<Page>("home");
-  const { isLoading, isAuthenticated } = useAuth();
-
-  const [homeSection, setHomeSection] = useState<string | null>(null);
+function HomeSection() {
+  const location = useLocation();
 
   useEffect(() => {
-    if (page !== "home" || !homeSection) return;
+    const sectionId = location.hash.replace("#", "");
 
-    const section = document.getElementById(homeSection);
-
-    if (section) {
-      section.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-
-      setHomeSection(null);
+    if (!sectionId) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
     }
-  }, [page, homeSection]);
 
-  function navigateToHomeSection(section: string) {
-    setHomeSection(section);
-    setPage("home");
-  }
+    const section = document.getElementById(sectionId);
+
+    section?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [location.hash, location.key]);
+
+  return <Home />;
+}
+
+function App() {
+  const navigate = useNavigate();
+  const { isLoading, isAuthenticated } = useAuth();
 
   if (isLoading) {
     return (
@@ -48,61 +53,63 @@ function App() {
     );
   }
 
-  if (page === "login") {
-    return (
-      <Login onBack={() => setPage("home")} onSuccess={() => setPage("home")} />
-    );
-  }
-
-  if (page === "register") {
-    return (
-      <Register
-        onBack={() => setPage("home")}
-        onSuccess={() => setPage("login")}
-      />
-    );
-  }
-
-  function renderPage() {
-    switch (page) {
-      case "ranking":
-        return <Ranking />;
-
-      case "profile":
-        return isAuthenticated ? (
-          <Profile onBack={() => setPage("home")} />
-        ) : (
-          <Home />
-        );
-
-      case "home":
-      default:
-        return <Home />;
-    }
-  }
-
   return (
-    <div className="flex min-h-screen flex-col bg-[#101014]">
-      <Header
-        onLoginClick={() => setPage("login")}
-        onRegisterClick={() => setPage("register")}
-        onProfileClick={() => setPage("profile")}
-        onHomeClick={() => {
-          setPage("home");
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
-        onRankingClick={() => {
-          setPage("ranking");
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
-        onMatchesClick={() => navigateToHomeSection("partidas")}
-        onChampionshipsClick={() => navigateToHomeSection("campeonatos")}
+    <Routes>
+      <Route
+        path="/login"
+        element={
+          <Login onBack={() => navigate("/")} onSuccess={() => navigate("/")} />
+        }
       />
 
-      {renderPage()}
+      <Route
+        path="/cadastro"
+        element={
+          <Register
+            onBack={() => navigate("/")}
+            onSuccess={() => navigate("/login")}
+          />
+        }
+      />
 
-      <Footer />
-    </div>
+      <Route
+        path="/*"
+        element={
+          <div className="flex min-h-screen flex-col bg-[#101014]">
+            <Header
+              onLoginClick={() => navigate("/login")}
+              onRegisterClick={() => navigate("/cadastro")}
+              onProfileClick={() => navigate("/perfil")}
+              onHomeClick={() => navigate("/")}
+              onRankingClick={() => navigate("/ranking")}
+              onMatchesClick={() => navigate("/#partidas")}
+              onChampionshipsClick={() => navigate("/#campeonatos")}
+            />
+
+            <Routes>
+              <Route path="/" element={<HomeSection />} />
+
+              <Route path="/ranking" element={<Ranking />} />
+
+              <Route
+                path="/perfil"
+                element={
+                  isAuthenticated ? (
+                    <Profile onBack={() => navigate("/")} />
+                  ) : (
+                    <Navigate to="/login" replace />
+                  )
+                }
+              />
+
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+
+            <Footer />
+          </div>
+        }
+      />
+    </Routes>
   );
 }
 
