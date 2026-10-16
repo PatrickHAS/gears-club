@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { useAuth } from "../contexts/AuthContext";
 import { EditPlayerProfile } from "../components/EditPlayerProfile";
+import { MatchmakingPreferences } from "../components/MatchmakingPreferences";
 
 import {
   getMyProfile,
@@ -204,6 +205,7 @@ export function Profile({ onBack }: ProfileProps) {
               implementação do sistema de partidas.
             </p>
           </div>
+          {accessToken && <MatchmakingPreferences accessToken={accessToken} />}
         </div>
       </div>
     </main>
