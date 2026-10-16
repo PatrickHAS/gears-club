@@ -8,3 +8,5 @@ coverage/
 .next/
 .vite/
 *.log
+# TypeScript incremental build
+*.tsbuildinfo
