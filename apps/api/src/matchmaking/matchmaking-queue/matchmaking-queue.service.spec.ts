@@ -10,10 +10,12 @@ describe('MatchmakingQueueService', () => {
 
   const evalMock = vi.fn();
   const findManyMock = vi.fn();
+  const findUniqueMock = vi.fn();
 
   beforeEach(async () => {
     evalMock.mockReset();
     findManyMock.mockReset();
+    findUniqueMock.mockReset();
 
     const module = await Test.createTestingModule({
       providers: [
@@ -31,6 +33,7 @@ describe('MatchmakingQueueService', () => {
           useValue: {
             playerProfile: {
               findMany: findManyMock,
+              findUnique: findUniqueMock,
             },
           },
         },
@@ -202,5 +205,104 @@ describe('MatchmakingQueueService', () => {
     const result = await service.findMatch();
 
     expect(result).toBeNull();
+  });
+
+  it('deve reservar 8 jogadores disponíveis', async () => {
+    const userIds = Array.from({ length: 8 }, (_, i) => `user-${i}`);
+
+    evalMock.mockResolvedValue(1);
+
+    const result = await service.reservePlayers(userIds, 'reserva-123');
+
+    expect(result).toBe(true);
+
+    expect(evalMock).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('ZREM'"),
+      {
+        keys: [
+          'matchmaking:reservation:reserva-123',
+          'matchmaking:queue:index',
+
+          ...userIds.map((id) => `matchmaking:queue:${id}`),
+
+          ...userIds.map((id) => `matchmaking:player:reservation:${id}`),
+        ],
+        arguments: ['120', ...userIds, 'reserva-123'],
+      },
+    );
+  });
+
+  it('não deve reservar se algum jogador estiver indisponível', async () => {
+    const userIds = Array.from({ length: 8 }, (_, i) => `user-${i}`);
+
+    evalMock.mockResolvedValue(0);
+
+    const result = await service.reservePlayers(userIds, 'reserva-456');
+
+    expect(result).toBe(false);
+  });
+
+  it('deve permitir entrada na fila quando o jogador estiver disponível', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    evalMock.mockResolvedValue(1);
+
+    const result = await service.join('user-br');
+
+    expect(result.userId).toBe('user-br');
+    expect(result.joinedAt).toEqual(expect.any(String));
+
+    expect(evalMock).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('EXISTS', KEYS[3])"),
+      {
+        keys: [
+          'matchmaking:queue:user-br',
+          'matchmaking:queue:index',
+          'matchmaking:player:reservation:user-br',
+        ],
+        arguments: [expect.any(String), '120', expect.any(String), 'user-br'],
+      },
+    );
+  });
+
+  it('deve impedir entrada duplicada na fila', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    evalMock.mockResolvedValue(0);
+
+    await expect(service.join('user-br')).rejects.toThrow(
+      'Você já está na fila de matchmaking.',
+    );
+  });
+
+  it('deve impedir entrada de jogador com reserva ativa', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    evalMock.mockResolvedValue(2);
+
+    await expect(service.join('user-br')).rejects.toThrow(
+      'Você já possui uma reserva ativa de matchmaking.',
+    );
+  });
+
+  it('deve rejeitar uma reserva com jogadores duplicados', async () => {
+    const userIds = Array(8).fill('mesmo-jogador');
+
+    await expect(
+      service.reservePlayers(userIds, 'reserva-789'),
+    ).rejects.toThrow(
+      'A reserva exige 8 jogadores distintos e um identificador válido.',
+    );
+
+    expect(evalMock).not.toHaveBeenCalled();
   });
 });

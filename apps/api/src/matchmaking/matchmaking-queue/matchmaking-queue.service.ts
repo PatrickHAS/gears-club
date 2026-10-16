@@ -33,6 +33,7 @@ export class MatchmakingQueueService {
   private readonly queuePrefix = 'matchmaking:queue:';
   private readonly queueIndexKey = 'matchmaking:queue:index';
   private readonly queueTtlSeconds = 120;
+  private readonly reservationTtlSeconds = 120;
 
   constructor(
     private readonly redis: RedisService,
@@ -41,6 +42,10 @@ export class MatchmakingQueueService {
 
   private getQueueKey(userId: string): string {
     return `${this.queuePrefix}${userId}`;
+  }
+
+  private getPlayerReservationKey(userId: string): string {
+    return `matchmaking:player:reservation:${userId}`;
   }
 
   private async validatePlayerProfile(userId: string): Promise<void> {
@@ -61,6 +66,7 @@ export class MatchmakingQueueService {
 
   async join(userId: string): Promise<QueueEntry> {
     await this.validatePlayerProfile(userId);
+
     const entry: QueueEntry = {
       userId,
       joinedAt: new Date().toISOString(),
@@ -69,30 +75,41 @@ export class MatchmakingQueueService {
     try {
       const result = await this.redis.getClient().eval(
         `
-    local created = redis.call(
-      'SET',
-      KEYS[1],
-      ARGV[1],
-      'NX',
-      'EX',
-      tonumber(ARGV[2])
-    )
+        -- Impede a entrada de jogadores reservados.
+        if redis.call('EXISTS', KEYS[3]) == 1 then
+          return 2
+        end
 
-    if not created then
-      return 0
-    end
+        -- Inscreve o jogador apenas se ainda não estiver na fila.
+        local created = redis.call(
+          'SET',
+          KEYS[1],
+          ARGV[1],
+          'NX',
+          'EX',
+          tonumber(ARGV[2])
+        )
 
-    redis.call(
-      'ZADD',
-      KEYS[2],
-      tonumber(ARGV[3]),
-      ARGV[4]
-    )
+        if not created then
+          return 0
+        end
 
-    return 1
-  `,
+        -- Adiciona o jogador ao índice ordenado.
+        redis.call(
+          'ZADD',
+          KEYS[2],
+          tonumber(ARGV[3]),
+          ARGV[4]
+        )
+
+        return 1
+      `,
         {
-          keys: [this.getQueueKey(userId), this.queueIndexKey],
+          keys: [
+            this.getQueueKey(userId),
+            this.queueIndexKey,
+            this.getPlayerReservationKey(userId),
+          ],
           arguments: [
             JSON.stringify(entry),
             String(this.queueTtlSeconds),
@@ -102,17 +119,28 @@ export class MatchmakingQueueService {
         },
       );
 
+      if (result === 2) {
+        throw new ConflictException(
+          'Você já possui uma reserva ativa de matchmaking.',
+        );
+      }
+
       if (result === 0) {
         throw new ConflictException('Você já está na fila de matchmaking.');
       }
 
-      if (result === null) {
-        throw new ConflictException('Você já está na fila de matchmaking.');
+      if (result !== 1) {
+        throw new ServiceUnavailableException(
+          'Resposta inesperada do serviço de matchmaking.',
+        );
       }
 
       return entry;
     } catch (error) {
-      if (error instanceof ConflictException) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof ServiceUnavailableException
+      ) {
         throw error;
       }
 
@@ -293,5 +321,108 @@ export class MatchmakingQueueService {
     }
 
     return selectMatchmakingPlayers(candidates);
+  }
+
+  async reservePlayers(
+    userIds: string[],
+    reservationId: string,
+  ): Promise<boolean> {
+    if (
+      userIds.length !== 8 ||
+      new Set(userIds).size !== 8 ||
+      userIds.some((id) => !id.trim()) ||
+      !reservationId.trim()
+    ) {
+      throw new BadRequestException(
+        'A reserva exige 8 jogadores distintos e um identificador válido.',
+      );
+    }
+
+    const reservationKey = `matchmaking:reservation:${reservationId}`;
+
+    const playerReservationKeys = userIds.map(
+      (userId) => `matchmaking:player:reservation:${userId}`,
+    );
+
+    try {
+      const result = await this.redis.getClient().eval(
+        `
+        -- KEYS[1]: reserva
+        -- KEYS[2]: indice da fila
+        -- KEYS[3..10]: inscricoes dos jogadores
+        -- KEYS[11..18]: bloqueios individuais
+
+        if redis.call('EXISTS', KEYS[1]) == 1 then
+          return 0
+        end
+
+        -- Todos precisam continuar na fila.
+        for i = 3, 10 do
+          if redis.call('EXISTS', KEYS[i]) == 0 then
+            return 0
+          end
+        end
+
+        -- Nenhum jogador pode estar reservado.
+        for i = 11, 18 do
+          if redis.call('EXISTS', KEYS[i]) == 1 then
+            return 0
+          end
+        end
+
+        -- Cria a reserva principal.
+        redis.call(
+          'SET',
+          KEYS[1],
+          cjson.encode({
+            userIds = {
+              ARGV[2], ARGV[3], ARGV[4], ARGV[5],
+              ARGV[6], ARGV[7], ARGV[8], ARGV[9]
+            }
+          }),
+          'EX',
+          tonumber(ARGV[1])
+        )
+
+        -- Bloqueia individualmente os oito jogadores.
+        for i = 11, 18 do
+          redis.call(
+            'SET',
+            KEYS[i],
+            ARGV[10],
+            'EX',
+            tonumber(ARGV[1])
+          )
+        end
+
+        -- Remove os jogadores da fila.
+        for i = 3, 10 do
+          redis.call('DEL', KEYS[i])
+          redis.call('ZREM', KEYS[2], ARGV[i - 1])
+        end
+
+        return 1
+      `,
+        {
+          keys: [
+            reservationKey,
+            this.queueIndexKey,
+            ...userIds.map((id) => this.getQueueKey(id)),
+            ...playerReservationKeys,
+          ],
+          arguments: [
+            String(this.reservationTtlSeconds),
+            ...userIds,
+            reservationId,
+          ],
+        },
+      );
+
+      return result === 1;
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível reservar os jogadores.',
+      );
+    }
   }
 }
