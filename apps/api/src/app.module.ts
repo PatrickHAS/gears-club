@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { PlayersModule } from './players/players.module.js';
 import { RatingsModule } from './ratings/ratings.module.js';
 import { MatchmakingModule } from './matchmaking/matchmaking.module.js';
+import { RedisModule } from './redis/redis.module.js';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { MatchmakingModule } from './matchmaking/matchmaking.module.js';
     PlayersModule,
     RatingsModule,
     MatchmakingModule,
+    RedisModule,
   ],
   controllers: [AppController],
   providers: [AppService],
