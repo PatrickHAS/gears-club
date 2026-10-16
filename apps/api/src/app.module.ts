@@ -8,6 +8,7 @@ import { UsersModule } from './users/users.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { PlayersModule } from './players/players.module.js';
 import { RatingsModule } from './ratings/ratings.module.js';
+import { MatchmakingModule } from './matchmaking/matchmaking.module.js';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { RatingsModule } from './ratings/ratings.module.js';
     AuthModule,
     PlayersModule,
     RatingsModule,
+    MatchmakingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
