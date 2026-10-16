@@ -25,6 +25,6 @@ import { RefreshSessionService } from './refresh-session.service.js';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtAuthGuard, RefreshSessionService],
-  exports: [JwtAuthGuard],
+  exports: [JwtModule, JwtAuthGuard],
 })
 export class AuthModule {}

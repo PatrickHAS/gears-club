@@ -11,9 +11,16 @@ const navigation = [
 interface HeaderProps {
   onLoginClick: () => void;
   onRegisterClick: () => void;
+  onProfileClick: () => void;
+  onHomeClick: () => void;
 }
 
-export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
+export function Header({
+  onLoginClick,
+  onRegisterClick,
+  onProfileClick,
+  onHomeClick,
+}: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const { user, isAuthenticated, signOut } = useAuth();
@@ -28,6 +35,16 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
     onRegisterClick();
   }
 
+  function handleProfile() {
+    setMenuOpen(false);
+    onProfileClick();
+  }
+
+  function handleHome() {
+    setMenuOpen(false);
+    onHomeClick();
+  }
+
   async function handleLogout() {
     setMenuOpen(false);
     await signOut();
@@ -39,7 +56,10 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
         {/* Logo */}
         <a
           href="#inicio"
-          onClick={() => setMenuOpen(false)}
+          onClick={(event) => {
+            event.preventDefault();
+            handleHome();
+          }}
           className="flex items-center gap-3"
         >
           <img
@@ -82,6 +102,14 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
                   {user.username}
                 </span>
               </div>
+
+              <button
+                type="button"
+                onClick={handleProfile}
+                className="rounded-lg border border-red-800 px-4 py-2 text-sm font-semibold text-red-400 transition hover:border-red-600 hover:text-white"
+              >
+                Meu Perfil
+              </button>
 
               <button
                 type="button"
@@ -165,6 +193,14 @@ export function Header({ onLoginClick, onRegisterClick }: HeaderProps) {
                       </p>
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={handleProfile}
+                    className="w-full rounded-lg border border-zinc-700 px-4 py-3 text-left font-semibold text-white transition hover:border-red-600"
+                  >
+                    Meu Perfil
+                  </button>
 
                   {/* Logout */}
                   <button

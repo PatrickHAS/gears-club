@@ -7,12 +7,24 @@ import { useAuth } from "./contexts/AuthContext";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
+import { Profile } from "./pages/Profile";
 
-type Page = "home" | "login" | "register";
+type Page = "home" | "login" | "register" | "profile";
 
 function App() {
   const [page, setPage] = useState<Page>("home");
-  const { isLoading } = useAuth();
+
+  const { isLoading, isAuthenticated } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-black text-white">
+        <p className="animate-pulse text-lg font-semibold text-red-500">
+          Carregando Gears Club...
+        </p>
+      </div>
+    );
+  }
 
   if (page === "login") {
     return (
@@ -29,24 +41,24 @@ function App() {
     );
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-black text-white">
-        <p className="animate-pulse text-lg font-semibold text-red-500">
-          Carregando Gears Club...
-        </p>
-      </div>
-    );
-  }
+  const currentPage =
+    page === "profile" && isAuthenticated ? "profile" : "home";
 
   return (
     <>
       <Header
         onLoginClick={() => setPage("login")}
         onRegisterClick={() => setPage("register")}
+        onProfileClick={() => setPage("profile")}
+        onHomeClick={() => setPage("home")}
       />
 
-      <Home />
+      {currentPage === "profile" ? (
+        <Profile onBack={() => setPage("home")} />
+      ) : (
+        <Home />
+      )}
+
       <Footer />
     </>
   );
