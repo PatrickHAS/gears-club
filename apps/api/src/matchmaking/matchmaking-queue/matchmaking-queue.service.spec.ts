@@ -150,4 +150,57 @@ describe('MatchmakingQueueService', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('deve encontrar uma partida com 8 jogadores compatíveis', async () => {
+    const entries = Array.from({ length: 8 }, (_, i) => ({
+      userId: `user-${i}`,
+      joinedAt: new Date(Date.UTC(2026, 9, 16, 18, i)).toISOString(),
+    }));
+
+    evalMock.mockResolvedValue(entries.map((entry) => JSON.stringify(entry)));
+
+    findManyMock.mockResolvedValue(
+      entries.map((entry, i) => ({
+        userId: entry.userId,
+        gamertag: `Player${i}`,
+        country: 'BR',
+        rating: { elo: 1000 + i * 10 },
+        matchmakingRegions: [{ country: 'US' }],
+      })),
+    );
+
+    const result = await service.findMatch();
+
+    expect(result).not.toBeNull();
+    expect(result?.players).toHaveLength(8);
+    expect(result?.eloDifference).toBe(70);
+    expect(['BR', 'US']).toContain(result?.region);
+
+    expect(result?.players.map((player) => player.userId)).toEqual(
+      entries.map((entry) => entry.userId),
+    );
+  });
+
+  it('não deve encontrar partida quando houver menos de 8 candidatos', async () => {
+    const entries = Array.from({ length: 7 }, (_, i) => ({
+      userId: `user-${i}`,
+      joinedAt: new Date(Date.UTC(2026, 9, 16, 18, i)).toISOString(),
+    }));
+
+    evalMock.mockResolvedValue(entries.map((entry) => JSON.stringify(entry)));
+
+    findManyMock.mockResolvedValue(
+      entries.map((entry, i) => ({
+        userId: entry.userId,
+        gamertag: `Player${i}`,
+        country: 'BR',
+        rating: { elo: 1000 },
+        matchmakingRegions: [],
+      })),
+    );
+
+    const result = await service.findMatch();
+
+    expect(result).toBeNull();
+  });
 });

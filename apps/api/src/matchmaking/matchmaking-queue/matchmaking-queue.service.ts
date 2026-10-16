@@ -5,6 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import {
+  selectMatchmakingPlayers,
+  type MatchmakingSelection,
+} from './matchmaking-selector.js';
+
 import { RedisService } from '../../redis/redis.service.js';
 import { BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -278,5 +283,15 @@ export class MatchmakingQueueService {
     }
 
     return candidates;
+  }
+
+  async findMatch(): Promise<MatchmakingSelection | null> {
+    const candidates = await this.getCandidates();
+
+    if (candidates.length < 8) {
+      return null;
+    }
+
+    return selectMatchmakingPlayers(candidates);
   }
 }
