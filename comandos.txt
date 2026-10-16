@@ -1,0 +1,9 @@
+curl -i -X POST http://localhost:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"cx@gearsclub.com","password":"senhaforte2026"}'
+
+read -rsp "Cole seu accessToken: " TOKEN
+echo
+
+curl -s -X POST http://localhost:3000/matchmaking/queue \
+  -H "Authorization: Bearer $TOKEN"
