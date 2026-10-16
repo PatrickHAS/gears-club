@@ -14,6 +14,15 @@ export interface QueueEntry {
   joinedAt: string;
 }
 
+export interface MatchmakingCandidate {
+  userId: string;
+  joinedAt: string;
+  gamertag: string;
+  country: string;
+  elo: number;
+  acceptedCountries: string[];
+}
+
 @Injectable()
 export class MatchmakingQueueService {
   private readonly queuePrefix = 'matchmaking:queue:';
@@ -206,5 +215,68 @@ export class MatchmakingQueueService {
         'Não foi possível consultar os jogadores ativos na fila.',
       );
     }
+  }
+
+  async getCandidates(): Promise<MatchmakingCandidate[]> {
+    const activeQueue = await this.getActiveQueue();
+
+    if (activeQueue.length === 0) {
+      return [];
+    }
+
+    const profiles = await this.prisma.playerProfile.findMany({
+      where: {
+        userId: {
+          in: activeQueue.map((entry) => entry.userId),
+        },
+      },
+      select: {
+        userId: true,
+        gamertag: true,
+        country: true,
+        rating: {
+          select: {
+            elo: true,
+          },
+        },
+        matchmakingRegions: {
+          select: {
+            country: true,
+          },
+        },
+      },
+    });
+
+    const profilesByUserId = new Map(
+      profiles.map((profile) => [profile.userId, profile]),
+    );
+
+    const candidates: MatchmakingCandidate[] = [];
+
+    for (const entry of activeQueue) {
+      const profile = profilesByUserId.get(entry.userId);
+
+      if (!profile?.gamertag || !profile.country) {
+        continue;
+      }
+
+      const acceptedCountries = [
+        ...new Set([
+          profile.country,
+          ...profile.matchmakingRegions.map((region) => region.country),
+        ]),
+      ].sort();
+
+      candidates.push({
+        userId: entry.userId,
+        joinedAt: entry.joinedAt,
+        gamertag: profile.gamertag,
+        country: profile.country,
+        elo: profile.rating?.elo ?? 1000,
+        acceptedCountries,
+      });
+    }
+
+    return candidates;
   }
 }
