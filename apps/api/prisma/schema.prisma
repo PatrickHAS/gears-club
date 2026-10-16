@@ -51,7 +51,26 @@ model PlayerProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating PlayerRating?
 
   @@map("player_profiles")
+}
+
+model PlayerRating {
+  id              String @id @default(uuid())
+  playerProfileId String @unique
+
+  elo     Int @default(1000)
+  wins    Int @default(0)
+  losses  Int @default(0)
+  matches Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  playerProfile PlayerProfile @relation(fields: [playerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([elo])
+  @@map("player_ratings")
 }
