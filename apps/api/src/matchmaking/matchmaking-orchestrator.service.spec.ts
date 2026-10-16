@@ -50,12 +50,17 @@ describe('MatchmakingOrchestratorService', () => {
     playerProfile: {
       findMany: vi.fn(),
     },
+    match: {
+      findUnique: vi.fn(),
+    },
   };
 
   let service: MatchmakingOrchestratorService;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    prisma.match.findUnique.mockReset();
+    prisma.match.findUnique.mockResolvedValue(null);
 
     service = new MatchmakingOrchestratorService(
       queue as unknown as MatchmakingQueueService,
@@ -103,6 +108,7 @@ describe('MatchmakingOrchestratorService', () => {
     expect(matches.createMatch).toHaveBeenCalledWith({
       playerProfileIds: profiles.map((profile) => profile.id),
       region: 'BR',
+      reservationId: expect.any(String),
     });
 
     expect(queue.releaseReservation).not.toHaveBeenCalled();
@@ -127,10 +133,11 @@ describe('MatchmakingOrchestratorService', () => {
     );
   });
 
-  it('libera a reserva quando o PostgreSQL falha', async () => {
+  it('preserva a reserva quando a criação da partida falha', async () => {
     queue.findMatch.mockResolvedValue(selection);
     queue.reservePlayers.mockResolvedValue(true);
     prisma.playerProfile.findMany.mockResolvedValue(profiles);
+
     matches.createMatch.mockRejectedValue(new Error('PostgreSQL indisponível'));
 
     await expect(service.createMatchFromQueue()).rejects.toThrow(
@@ -139,23 +146,152 @@ describe('MatchmakingOrchestratorService', () => {
 
     const reservationId = queue.reservePlayers.mock.calls[0][1];
 
-    expect(queue.releaseReservation).toHaveBeenCalledWith(
-      userIds,
-      reservationId,
-    );
+    expect(prisma.match.findUnique).toHaveBeenCalledWith({
+      where: { reservationId },
+      include: { participants: true },
+    });
+
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
   });
 
-  it('preserva o erro original quando a liberação também falha', async () => {
+  it('preserva o erro original quando a liberação pré-criação falha', async () => {
+    queue.findMatch.mockResolvedValue(selection);
+    queue.reservePlayers.mockResolvedValue(true);
+
+    prisma.playerProfile.findMany.mockRejectedValue(
+      new Error('Falha ao buscar perfis'),
+    );
+
+    queue.releaseReservation.mockRejectedValue(new Error('Redis indisponível'));
+
+    await expect(service.createMatchFromQueue()).rejects.toThrow(
+      'Falha ao buscar perfis',
+    );
+
+    expect(matches.createMatch).not.toHaveBeenCalled();
+    expect(queue.releaseReservation).toHaveBeenCalledOnce();
+    expect(prisma.match.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('recupera partida criada quando a resposta do PostgreSQL falha', async () => {
+    queue.findMatch.mockResolvedValue(selection);
+    queue.reservePlayers.mockResolvedValue(true);
+    prisma.playerProfile.findMany
+      .mockResolvedValueOnce(profiles)
+      .mockResolvedValueOnce(profiles);
+
+    matches.createMatch.mockRejectedValue(
+      new Error('Conexão perdida após criar partida'),
+    );
+
+    prisma.match.findUnique.mockResolvedValue(match);
+
+    const result = await service.createMatchFromQueue();
+
+    expect(result).toEqual(match);
+
+    const reservationId = queue.reservePlayers.mock.calls[0][1];
+
+    expect(prisma.match.findUnique).toHaveBeenCalledWith({
+      where: { reservationId },
+      include: { participants: true },
+    });
+
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
+  });
+
+  it('preserva a reserva quando não consegue consultar o PostgreSQL', async () => {
     queue.findMatch.mockResolvedValue(selection);
     queue.reservePlayers.mockResolvedValue(true);
     prisma.playerProfile.findMany.mockResolvedValue(profiles);
+
     matches.createMatch.mockRejectedValue(new Error('Falha ao criar partida'));
-    queue.releaseReservation.mockRejectedValue(new Error('Redis indisponível'));
+
+    prisma.match.findUnique.mockRejectedValue(
+      new Error('PostgreSQL indisponível'),
+    );
 
     await expect(service.createMatchFromQueue()).rejects.toThrow(
       'Falha ao criar partida',
     );
 
-    expect(queue.releaseReservation).toHaveBeenCalledOnce();
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
+  });
+
+  it('rejeita partida recuperada de outra região sem liberar a reserva', async () => {
+    queue.findMatch.mockResolvedValue(selection);
+    queue.reservePlayers.mockResolvedValue(true);
+    prisma.playerProfile.findMany.mockResolvedValue(profiles);
+
+    matches.createMatch.mockRejectedValue(
+      new Error('Conexão perdida após criar partida'),
+    );
+
+    prisma.match.findUnique.mockResolvedValue({
+      ...match,
+      region: 'US',
+    });
+
+    await expect(service.createMatchFromQueue()).rejects.toThrow(
+      'A partida recuperada não corresponde à reserva original.',
+    );
+
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
+  });
+
+  it('rejeita partida recuperada com jogadores diferentes', async () => {
+    queue.findMatch.mockResolvedValue(selection);
+    queue.reservePlayers.mockResolvedValue(true);
+
+    prisma.playerProfile.findMany
+      .mockResolvedValueOnce(profiles)
+      .mockResolvedValueOnce([
+        ...profiles.slice(0, 7),
+        { id: 'profile-99', userId: 'user-99' },
+      ]);
+
+    matches.createMatch.mockRejectedValue(
+      new Error('Conexão perdida após criar partida'),
+    );
+
+    prisma.match.findUnique.mockResolvedValue({
+      ...match,
+      participants: [
+        ...match.participants.slice(0, 7),
+        {
+          playerProfileId: 'profile-99',
+          team: 'LOCUST',
+        },
+      ],
+    });
+
+    await expect(service.createMatchFromQueue()).rejects.toThrow(
+      'A partida recuperada não corresponde à reserva original.',
+    );
+
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
+  });
+
+  it('preserva a reserva quando a validação dos participantes falha', async () => {
+    queue.findMatch.mockResolvedValue(selection);
+    queue.reservePlayers.mockResolvedValue(true);
+
+    prisma.playerProfile.findMany
+      .mockResolvedValueOnce(profiles)
+      .mockRejectedValueOnce(new Error('Falha ao consultar participantes'));
+
+    matches.createMatch.mockRejectedValue(
+      new Error('Conexão perdida após criar partida'),
+    );
+
+    prisma.match.findUnique.mockResolvedValue(match);
+
+    await expect(service.createMatchFromQueue()).rejects.toThrow(
+      'Falha ao consultar participantes',
+    );
+
+    expect(prisma.match.findUnique).toHaveBeenCalledOnce();
+    expect(prisma.playerProfile.findMany).toHaveBeenCalledTimes(2);
+    expect(queue.releaseReservation).not.toHaveBeenCalled();
   });
 });

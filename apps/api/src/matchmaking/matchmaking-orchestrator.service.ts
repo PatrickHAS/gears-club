@@ -35,6 +35,8 @@ export class MatchmakingOrchestratorService {
       return null;
     }
 
+    let creationAttempted = false;
+
     try {
       // 3. Buscar os perfis correspondentes.
       const profiles = await this.prisma.playerProfile.findMany({
@@ -69,9 +71,12 @@ export class MatchmakingOrchestratorService {
       });
 
       // 4. Criar a partida no PostgreSQL.
+      creationAttempted = true;
+
       const match = await this.matches.createMatch({
         playerProfileIds,
         region: selection.region,
+        reservationId,
       });
 
       this.logger.log(
@@ -80,17 +85,98 @@ export class MatchmakingOrchestratorService {
 
       return match;
     } catch (error) {
-      // 5. Liberar a reserva caso a criação falhe.
-      try {
-        await this.queue.releaseReservation(userIds, reservationId);
-      } catch (releaseError) {
-        this.logger.error(
-          'Falha ao liberar a reserva após erro na criação da partida.',
-          releaseError instanceof Error
-            ? releaseError.stack
-            : String(releaseError),
-        );
+      // Verifica se a partida foi criada antes da falha.
+
+      if (!creationAttempted) {
+        try {
+          await this.queue.releaseReservation(userIds, reservationId);
+        } catch (releaseError) {
+          this.logger.error(
+            'Falha ao liberar a reserva antes da criação da partida.',
+            releaseError instanceof Error
+              ? releaseError.stack
+              : String(releaseError),
+          );
+        }
+
+        throw error;
       }
+
+      let existingMatch;
+
+      try {
+        existingMatch = await this.prisma.match.findUnique({
+          where: { reservationId },
+          include: { participants: true },
+        });
+      } catch (lookupError) {
+        // Não é seguro liberar a reserva quando não conseguimos
+        // confirmar se a partida existe no PostgreSQL.
+        this.logger.error(
+          `Não foi possível verificar a reserva ${reservationId}. ` +
+            'Os jogadores serão mantidos reservados.',
+          lookupError instanceof Error
+            ? lookupError.stack
+            : String(lookupError),
+        );
+
+        throw error;
+      }
+
+      if (existingMatch) {
+        const expectedUserIds = new Set(userIds);
+
+        const participantProfileIds = existingMatch.participants.map(
+          (participant) => participant.playerProfileId,
+        );
+
+        const profiles = await this.prisma.playerProfile.findMany({
+          where: {
+            id: { in: participantProfileIds },
+          },
+          select: {
+            id: true,
+            userId: true,
+          },
+        });
+
+        const recoveredUserIds = new Set(
+          profiles.map((profile) => profile.userId),
+        );
+
+        const samePlayers =
+          existingMatch.participants.length === 8 &&
+          profiles.length === 8 &&
+          recoveredUserIds.size === 8 &&
+          userIds.every((userId) => recoveredUserIds.has(userId));
+
+        const sameRegion = existingMatch.region === selection.region;
+
+        if (!samePlayers || !sameRegion) {
+          this.logger.error(
+            `Partida ${existingMatch.id} incompatível com a reserva ${reservationId}.`,
+          );
+
+          // Não liberar a reserva automaticamente:
+          // precisamos investigar a inconsistência.
+          throw new Error(
+            'A partida recuperada não corresponde à reserva original.',
+          );
+        }
+
+        this.logger.warn(
+          `Partida ${existingMatch.id} recuperada após falha de resposta.`,
+        );
+
+        return existingMatch;
+      }
+
+      // A consulta confirmou que a partida não existe.
+      this.logger.error(
+        `Não foi encontrada partida para a reserva ${reservationId},  ` +
+          'mas a criação pode ainda estar em andamento. ' +
+          'A reserva não será liberada automaticamente.',
+      );
 
       throw error;
     }

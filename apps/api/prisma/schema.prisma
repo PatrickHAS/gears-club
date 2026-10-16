@@ -104,8 +104,12 @@ enum MatchTeam {
   LOCUST
 }
 
+
 model Match {
   id String @id @default(uuid())
+
+  // Identificador único da reserva no Redis.
+  reservationId String? @unique @db.Uuid
 
   mode   String @default("DEMOLITION")
   region String @db.VarChar(2)
@@ -123,6 +127,7 @@ model Match {
   @@index([region])
   @@map("matches")
 }
+
 
 model MatchParticipant {
   id String @id @default(uuid())
