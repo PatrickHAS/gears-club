@@ -1,3 +1,5 @@
+import { MatchmakingQueue } from "../components/matchmaking/MatchmakingQueue";
+
 export function Home() {
   return (
     <main id="inicio" className="flex-1">
@@ -42,6 +44,7 @@ export function Home() {
         <p className="mt-4 text-zinc-400">
           Encontre partidas competitivas e enfrente novos desafios.
         </p>
+        <MatchmakingQueue />
       </section>
 
       <section
