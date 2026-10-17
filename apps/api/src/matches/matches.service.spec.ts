@@ -28,6 +28,7 @@ describe('MatchesService', () => {
   const updateMatchMock = vi.fn();
   const findManyParticipantsMock = vi.fn();
   const upsertPlayerRatingMock = vi.fn();
+  const createDisputeEvidenceMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -62,6 +63,13 @@ describe('MatchesService', () => {
     findUniqueResultReportMock.mockResolvedValue(null);
     findManyResultReportMock.mockResolvedValue([]);
     findManyParticipantsMock.mockResolvedValue([]);
+    createDisputeEvidenceMock.mockResolvedValue({
+      id: 'evidence-123',
+      matchId: '550e8400-e29b-41d4-a716-446655440000',
+      captainId: 'captain-profile-123',
+      imageKey: 'disputes/test-evidence.png',
+      createdAt: new Date(),
+    });
 
     const module = await Test.createTestingModule({
       providers: [
@@ -85,6 +93,9 @@ describe('MatchesService', () => {
               findUnique: findUniqueResultReportMock,
               findMany: findManyResultReportMock,
               create: createResultReportMock,
+            },
+            matchDisputeEvidence: {
+              create: createDisputeEvidenceMock,
             },
             matchParticipant: {
               findMany: findManyParticipantsMock,
@@ -1002,6 +1013,170 @@ describe('MatchesService', () => {
 
       // A partida não pode ser marcada como concluída.
       expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('submitDisputeEvidence', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+    const userId = 'captain-user-123';
+
+    it('deve rejeitar referência de imagem vazia', async () => {
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, ''),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar referência contendo apenas espaços', async () => {
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, '   '),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar referência maior que 512 caracteres', async () => {
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, 'a'.repeat(513)),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve retornar 404 quando a partida não existe', async () => {
+      findUniqueMock.mockResolvedValue(null);
+
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, 'disputes/evidence.png'),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir jogadores que não são capitães', async () => {
+      findUniqueMock.mockResolvedValue({
+        status: 'DISPUTED',
+        participants: [],
+      });
+
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, 'disputes/evidence.png'),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir evidências em partidas fora de disputa', async () => {
+      findUniqueMock.mockResolvedValue({
+        status: 'IN_PROGRESS',
+        participants: [
+          {
+            playerProfileId: 'captain-profile-123',
+          },
+        ],
+      });
+
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, 'disputes/evidence.png'),
+      ).rejects.toThrow(ConflictException);
+
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve registrar a evidência vinculada ao capitão autenticado', async () => {
+      const imageKey = 'disputes/evidence.png';
+      const captainId = 'captain-profile-123';
+      createDisputeEvidenceMock.mockResolvedValue({
+        id: 'evidence-123',
+        matchId,
+        captainId,
+        imageKey,
+        createdAt: new Date(),
+      });
+
+      findUniqueMock.mockResolvedValue({
+        status: 'DISPUTED',
+        participants: [
+          {
+            playerProfileId: captainId,
+          },
+        ],
+      });
+
+      const result = await service.submitDisputeEvidence(
+        matchId,
+        userId,
+        imageKey,
+      );
+
+      expect(queryRawMock).toHaveBeenCalledOnce();
+
+      expect(findUniqueMock).toHaveBeenCalledWith({
+        where: { id: matchId },
+        select: {
+          status: true,
+          participants: {
+            where: {
+              isCaptain: true,
+              playerProfile: { userId },
+            },
+            select: {
+              playerProfileId: true,
+            },
+          },
+        },
+      });
+
+      expect(createDisputeEvidenceMock).toHaveBeenCalledWith({
+        data: {
+          matchId,
+          captainId,
+          imageKey,
+        },
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'evidence-123',
+          captainId,
+          imageKey,
+        }),
+      );
+    });
+
+    it('deve propagar o erro quando a persistência falhar', async () => {
+      const imageKey = 'disputes/evidence.png';
+
+      findUniqueMock.mockResolvedValue({
+        status: 'DISPUTED',
+        participants: [
+          {
+            playerProfileId: 'captain-profile-123',
+          },
+        ],
+      });
+
+      createDisputeEvidenceMock.mockRejectedValue(
+        new Error('Falha ao salvar evidência'),
+      );
+
+      await expect(
+        service.submitDisputeEvidence(matchId, userId, imageKey),
+      ).rejects.toThrow('Falha ao salvar evidência');
+
+      expect(transactionMock).toHaveBeenCalledOnce();
+
+      expect(createDisputeEvidenceMock).toHaveBeenCalledWith({
+        data: {
+          matchId,
+          captainId: 'captain-profile-123',
+          imageKey,
+        },
+      });
     });
   });
 });

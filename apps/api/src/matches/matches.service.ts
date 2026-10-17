@@ -115,6 +115,70 @@ export class MatchesService {
     });
   }
 
+  async submitDisputeEvidence(
+    matchId: string,
+    userId: string,
+    imageKey: string,
+  ) {
+    if (
+      typeof imageKey !== 'string' ||
+      !imageKey.trim() ||
+      imageKey.length > 512
+    ) {
+      throw new BadRequestException('A referência da imagem é inválida.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Serializa operações concorrentes na mesma partida.
+      await tx.$queryRaw`
+      SELECT id
+      FROM "matches"
+      WHERE id = ${matchId}
+      FOR UPDATE
+    `;
+
+      const match = await tx.match.findUnique({
+        where: { id: matchId },
+        select: {
+          status: true,
+          participants: {
+            where: {
+              isCaptain: true,
+              playerProfile: { userId },
+            },
+            select: {
+              playerProfileId: true,
+            },
+          },
+        },
+      });
+
+      if (!match) {
+        throw new NotFoundException('Partida não encontrada.');
+      }
+
+      if (match.participants.length === 0) {
+        throw new ForbiddenException(
+          'Somente os capitães podem enviar evidências.',
+        );
+      }
+
+      if (match.status !== MatchStatus.DISPUTED) {
+        throw new ConflictException('A partida não está em disputa.');
+      }
+
+      const captainId = match.participants[0].playerProfileId;
+
+      return tx.matchDisputeEvidence.create({
+        data: {
+          matchId,
+          captainId,
+          imageKey: imageKey.trim(),
+        },
+      });
+    });
+  }
+
   async reportResult(matchId: string, userId: string, winnerTeam: MatchTeam) {
     if (winnerTeam !== MatchTeam.COG && winnerTeam !== MatchTeam.LOCUST) {
       throw new BadRequestException('O vencedor deve ser COG ou LOCUST.');
