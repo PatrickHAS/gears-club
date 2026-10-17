@@ -129,13 +129,15 @@ model Match {
 }
 
 
+
 model MatchParticipant {
   id String @id @default(uuid())
 
   matchId         String
   playerProfileId String
 
-  team MatchTeam
+  team      MatchTeam
+  isCaptain Boolean   @default(false)
 
   createdAt DateTime @default(now())
 
@@ -147,3 +149,4 @@ model MatchParticipant {
   @@index([matchId, team])
   @@map("match_participants")
 }
+

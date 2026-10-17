@@ -10,6 +10,7 @@ describe('MatchesController', () => {
   let controller: MatchesController;
 
   const getMatchByIdMock = vi.fn();
+  const startMatchMock = vi.fn();
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -21,6 +22,7 @@ describe('MatchesController', () => {
           provide: MatchesService,
           useValue: {
             getMatchById: getMatchByIdMock,
+            startMatch: startMatchMock,
           },
         },
       ],
@@ -71,5 +73,36 @@ describe('MatchesController', () => {
     ) as unknown[];
 
     expect(guards).toContain(JwtAuthGuard);
+  });
+
+  it('deve iniciar a partida usando o usuário autenticado', async () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+
+    const request = {
+      user: {
+        id: 'captain-user-123',
+      },
+    };
+
+    const startedMatch = {
+      id: matchId,
+      status: 'IN_PROGRESS',
+      region: 'BR',
+      startedAt: new Date(),
+    };
+
+    startMatchMock.mockResolvedValue(startedMatch);
+
+    const result = await controller.startMatch(
+      matchId,
+      request as Parameters<MatchesController['startMatch']>[1],
+    );
+
+    expect(result).toEqual(startedMatch);
+
+    expect(startMatchMock).toHaveBeenCalledExactlyOnceWith(
+      matchId,
+      'captain-user-123',
+    );
   });
 });

@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { MatchTeam, Prisma } from '@prisma/client';
 
@@ -19,6 +20,8 @@ describe('MatchesService', () => {
   const transactionMock = vi.fn();
   const queryRawMock = vi.fn();
   const findFirstMock = vi.fn();
+  const updateManyMock = vi.fn();
+  const findUniqueOrThrowMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -49,7 +52,6 @@ describe('MatchesService', () => {
     vi.resetAllMocks();
     findFirstMock.mockResolvedValue(null);
     queryRawMock.mockResolvedValue([]);
-
     findUniqueMock.mockResolvedValue(null);
 
     const module = await Test.createTestingModule({
@@ -66,6 +68,8 @@ describe('MatchesService', () => {
               findUnique: findUniqueMock,
               findFirst: findFirstMock,
               create: createMock,
+              updateMany: updateManyMock,
+              findUniqueOrThrow: findUniqueOrThrowMock,
             },
             $queryRaw: queryRawMock,
             $transaction: transactionMock,
@@ -124,6 +128,41 @@ describe('MatchesService', () => {
 
     expect(cog).toHaveLength(4);
     expect(locust).toHaveLength(4);
+  });
+
+  it('deve definir um capitão para cada equipe', async () => {
+    findManyMock.mockResolvedValue(playerProfileIds.map((id) => ({ id })));
+
+    createMock.mockResolvedValue(existingMatch);
+
+    await service.createMatch(input);
+
+    const createArguments = createMock.mock.calls[0][0];
+    const participants = createArguments.data.participants.create;
+
+    const captains = participants.filter(
+      (participant: { isCaptain: boolean }) => participant.isCaptain,
+    );
+
+    expect(captains).toHaveLength(2);
+
+    expect(captains[0]).toMatchObject({
+      playerProfileId: playerProfileIds[0],
+      team: MatchTeam.COG,
+      isCaptain: true,
+    });
+
+    expect(captains[1]).toMatchObject({
+      playerProfileId: playerProfileIds[4],
+      team: MatchTeam.LOCUST,
+      isCaptain: true,
+    });
+
+    expect(
+      participants.filter(
+        (participant: { isCaptain: boolean }) => !participant.isCaptain,
+      ),
+    ).toHaveLength(6);
   });
 
   it('deve rejeitar partidas com menos de 8 jogadores', async () => {
@@ -377,6 +416,107 @@ describe('MatchesService', () => {
       await expect(
         service.getMatchById('partida-inexistente', participantUserId),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('startMatch', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+    const captainUserId = 'user-captain';
+
+    const pendingMatch = {
+      id: matchId,
+      status: 'PENDING',
+      participants: [{ id: 'captain-participant' }],
+    };
+
+    it('deve permitir que um capitão inicie a partida', async () => {
+      findUniqueMock.mockResolvedValue(pendingMatch);
+      updateManyMock.mockResolvedValue({ count: 1 });
+
+      const startedMatch = {
+        ...existingMatch,
+        id: matchId,
+        status: 'IN_PROGRESS',
+      };
+
+      findUniqueOrThrowMock.mockResolvedValue(startedMatch);
+
+      const result = await service.startMatch(matchId, captainUserId);
+
+      expect(result.status).toBe('IN_PROGRESS');
+
+      expect(findUniqueMock).toHaveBeenCalledWith({
+        where: { id: matchId },
+        select: {
+          id: true,
+          status: true,
+          participants: {
+            where: {
+              isCaptain: true,
+              playerProfile: { userId: captainUserId },
+            },
+            select: { id: true },
+          },
+        },
+      });
+
+      expect(updateManyMock).toHaveBeenCalledWith({
+        where: {
+          id: matchId,
+          status: 'PENDING',
+        },
+        data: {
+          status: 'IN_PROGRESS',
+          startedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('deve impedir jogadores que não são capitães', async () => {
+      findUniqueMock.mockResolvedValue({
+        ...pendingMatch,
+        participants: [],
+      });
+
+      await expect(service.startMatch(matchId, 'user-common')).rejects.toThrow(
+        ForbiddenException,
+      );
+
+      expect(updateManyMock).not.toHaveBeenCalled();
+    });
+
+    it('deve retornar 404 para partida inexistente', async () => {
+      findUniqueMock.mockResolvedValue(null);
+
+      await expect(service.startMatch(matchId, captainUserId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(updateManyMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir iniciar uma partida já iniciada', async () => {
+      findUniqueMock.mockResolvedValue({
+        ...pendingMatch,
+        status: 'IN_PROGRESS',
+      });
+
+      await expect(service.startMatch(matchId, captainUserId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(updateManyMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar quando outra solicitação iniciou a partida', async () => {
+      findUniqueMock.mockResolvedValue(pendingMatch);
+      updateManyMock.mockResolvedValue({ count: 0 });
+
+      await expect(service.startMatch(matchId, captainUserId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(findUniqueOrThrowMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { MatchTeam, Prisma } from '@prisma/client';
@@ -54,6 +55,63 @@ export class MatchesService {
     }
 
     return match;
+  }
+
+  async startMatch(matchId: string, userId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        id: true,
+        status: true,
+        participants: {
+          where: {
+            isCaptain: true,
+            playerProfile: {
+              userId,
+            },
+          },
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!match) {
+      throw new NotFoundException('Partida não encontrada.');
+    }
+
+    if (match.participants.length === 0) {
+      throw new ForbiddenException(
+        'Somente os capitães podem iniciar a partida.',
+      );
+    }
+
+    if (match.status !== 'PENDING') {
+      throw new ConflictException('Esta partida não está aguardando início.');
+    }
+
+    const result = await this.prisma.match.updateMany({
+      where: {
+        id: matchId,
+        status: 'PENDING',
+      },
+      data: {
+        status: 'IN_PROGRESS',
+        startedAt: new Date(),
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException('Esta partida já foi iniciada ou alterada.');
+    }
+
+    return this.prisma.match.findUniqueOrThrow({
+      where: { id: matchId },
+      include: {
+        participants: true,
+      },
+    });
   }
 
   private async lockPlayers(
@@ -179,6 +237,7 @@ export class MatchesService {
                 create: playerProfileIds.map((playerProfileId, index) => ({
                   playerProfileId,
                   team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+                  isCaptain: index === 0 || index === 4,
                 })),
               },
             },
