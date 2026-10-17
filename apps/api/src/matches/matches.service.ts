@@ -178,13 +178,38 @@ export class MatchesService {
         );
       }
 
-      return tx.matchResultReport.create({
+      const report = await tx.matchResultReport.create({
         data: {
           matchId,
           captainId,
           winnerTeam,
         },
       });
+
+      // Busca os reportes após registrar o resultado atual.
+      const reports = await tx.matchResultReport.findMany({
+        where: { matchId },
+        select: {
+          captainId: true,
+          winnerTeam: true,
+        },
+      });
+
+      // Aguarda os dois capitães.
+      if (reports.length === 2) {
+        const sameWinner = reports[0].winnerTeam === reports[1].winnerTeam;
+
+        await tx.match.update({
+          where: { id: matchId },
+          data: {
+            status: sameWinner
+              ? MatchStatus.AWAITING_VALIDATION
+              : MatchStatus.DISPUTED,
+          },
+        });
+      }
+
+      return report;
     });
   }
 
@@ -283,7 +308,12 @@ export class MatchesService {
           const activeMatch = await tx.match.findFirst({
             where: {
               status: {
-                in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+                in: [
+                  MatchStatus.PENDING,
+                  MatchStatus.IN_PROGRESS,
+                  MatchStatus.AWAITING_VALIDATION,
+                  MatchStatus.DISPUTED,
+                ],
               },
               participants: {
                 some: {

@@ -382,7 +382,7 @@ describe('MatchmakingQueueService', () => {
     expect(findFirstMatchMock).toHaveBeenCalledWith({
       where: {
         status: {
-          in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+          in: ['PENDING', 'IN_PROGRESS', 'AWAITING_VALIDATION', 'DISPUTED'],
         },
         participants: {
           some: {
@@ -434,7 +434,7 @@ describe('MatchmakingQueueService', () => {
     expect(findFirstMatchMock).toHaveBeenCalledWith({
       where: {
         status: {
-          in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+          in: ['PENDING', 'IN_PROGRESS', 'AWAITING_VALIDATION', 'DISPUTED'],
         },
         participants: {
           some: {
@@ -492,7 +492,12 @@ describe('MatchmakingQueueService', () => {
             none: {
               match: {
                 status: {
-                  in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+                  in: [
+                    'PENDING',
+                    'IN_PROGRESS',
+                    'AWAITING_VALIDATION',
+                    'DISPUTED',
+                  ],
                 },
               },
             },

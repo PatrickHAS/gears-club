@@ -15,10 +15,13 @@ describe('MatchesService - concorrência dos reportes', () => {
   const profileIds: string[] = [];
 
   const reservationId = randomUUID();
+  const reservationIds: string[] = [reservationId];
 
   let matchId: string;
   let captainUserId: string;
   let captainProfileId: string;
+  let secondCaptainUserId: string;
+  let secondCaptainProfileId: string;
 
   beforeAll(async () => {
     const databaseUrl = process.env.DATABASE_URL;
@@ -64,6 +67,8 @@ describe('MatchesService - concorrência dos reportes', () => {
 
     captainUserId = userIds[0];
     captainProfileId = profileIds[0];
+    secondCaptainUserId = userIds[4];
+    secondCaptainProfileId = profileIds[4];
 
     const match = await service.createMatch({
       playerProfileIds: profileIds,
@@ -79,7 +84,11 @@ describe('MatchesService - concorrência dos reportes', () => {
   afterAll(async () => {
     try {
       await prisma.match.deleteMany({
-        where: { reservationId },
+        where: {
+          reservationId: {
+            in: reservationIds,
+          },
+        },
       });
 
       if (userIds.length > 0) {
@@ -125,5 +134,125 @@ describe('MatchesService - concorrência dos reportes', () => {
     expect(reports).toHaveLength(1);
 
     expect([MatchTeam.COG, MatchTeam.LOCUST]).toContain(reports[0].winnerTeam);
+  });
+
+  it('deve aguardar homologação quando os dois capitães concordam', async () => {
+    const newReservationId = randomUUID();
+    reservationIds.push(newReservationId);
+
+    // Encerra a partida utilizada pelo teste anterior.
+    await prisma.match.update({
+      where: { id: matchId },
+      data: { status: 'CANCELLED' },
+    });
+
+    const match = await service.createMatch({
+      playerProfileIds: profileIds,
+      region: 'BR',
+      reservationId: newReservationId,
+    });
+
+    await service.startMatch(match.id, captainUserId);
+
+    await service.reportResult(match.id, captainUserId, MatchTeam.COG);
+
+    await service.reportResult(match.id, secondCaptainUserId, MatchTeam.COG);
+
+    const updatedMatch = await prisma.match.findUniqueOrThrow({
+      where: { id: match.id },
+      include: { resultReports: true },
+    });
+
+    expect(updatedMatch.status).toBe('AWAITING_VALIDATION');
+    expect(updatedMatch.resultReports).toHaveLength(2);
+
+    expect(
+      updatedMatch.resultReports.map((report) => report.captainId).sort(),
+    ).toEqual([captainProfileId, secondCaptainProfileId].sort());
+
+    expect(
+      updatedMatch.resultReports.every(
+        (report) => report.winnerTeam === MatchTeam.COG,
+      ),
+    ).toBe(true);
+  });
+
+  it('deve marcar DISPUTED quando os capitães discordam', async () => {
+    const newReservationId = randomUUID();
+    reservationIds.push(newReservationId);
+
+    // Libera os jogadores da partida do teste anterior.
+    await prisma.match.updateMany({
+      where: {
+        reservationId: { in: reservationIds },
+        status: { not: 'CANCELLED' },
+      },
+      data: { status: 'CANCELLED' },
+    });
+
+    const match = await service.createMatch({
+      playerProfileIds: profileIds,
+      region: 'BR',
+      reservationId: newReservationId,
+    });
+
+    await service.startMatch(match.id, captainUserId);
+
+    await service.reportResult(match.id, captainUserId, MatchTeam.COG);
+
+    await service.reportResult(match.id, secondCaptainUserId, MatchTeam.LOCUST);
+
+    const updatedMatch = await prisma.match.findUniqueOrThrow({
+      where: { id: match.id },
+      include: { resultReports: true },
+    });
+
+    expect(updatedMatch.status).toBe('DISPUTED');
+    expect(updatedMatch.resultReports).toHaveLength(2);
+
+    expect(
+      updatedMatch.resultReports.map((report) => report.winnerTeam).sort(),
+    ).toEqual([MatchTeam.COG, MatchTeam.LOCUST].sort());
+  });
+
+  it('deve processar reportes simultâneos de capitães diferentes', async () => {
+    // Libera os jogadores das partidas anteriores.
+    await prisma.match.updateMany({
+      where: {
+        reservationId: { in: reservationIds },
+        status: { not: 'CANCELLED' },
+      },
+      data: { status: 'CANCELLED' },
+    });
+
+    const newReservationId = randomUUID();
+    reservationIds.push(newReservationId);
+
+    const match = await service.createMatch({
+      playerProfileIds: profileIds,
+      region: 'BR',
+      reservationId: newReservationId,
+    });
+
+    await service.startMatch(match.id, captainUserId);
+
+    const results = await Promise.allSettled([
+      service.reportResult(match.id, captainUserId, MatchTeam.COG),
+      service.reportResult(match.id, secondCaptainUserId, MatchTeam.COG),
+    ]);
+
+    expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
+
+    const updatedMatch = await prisma.match.findUniqueOrThrow({
+      where: { id: match.id },
+      include: { resultReports: true },
+    });
+
+    expect(updatedMatch.resultReports).toHaveLength(2);
+    expect(updatedMatch.status).toBe('AWAITING_VALIDATION');
+
+    expect(
+      updatedMatch.resultReports.map((report) => report.captainId).sort(),
+    ).toEqual([captainProfileId, secondCaptainProfileId].sort());
   });
 });

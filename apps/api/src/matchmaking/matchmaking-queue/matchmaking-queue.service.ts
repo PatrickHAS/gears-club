@@ -74,7 +74,7 @@ export class MatchmakingQueueService {
       activeMatch = await this.prisma.match.findFirst({
         where: {
           status: {
-            in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+            in: ['PENDING', 'IN_PROGRESS', 'AWAITING_VALIDATION', 'DISPUTED'],
           },
           participants: {
             some: {
@@ -299,7 +299,12 @@ export class MatchmakingQueueService {
           none: {
             match: {
               status: {
-                in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+                in: [
+                  'PENDING',
+                  'IN_PROGRESS',
+                  'AWAITING_VALIDATION',
+                  'DISPUTED',
+                ],
               },
             },
           },

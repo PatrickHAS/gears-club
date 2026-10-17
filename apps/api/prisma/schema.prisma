@@ -95,6 +95,7 @@ model PlayerMatchmakingRegion {
 enum MatchStatus {
   PENDING
   IN_PROGRESS
+  AWAITING_VALIDATION
   COMPLETED
   DISPUTED
   CANCELLED
