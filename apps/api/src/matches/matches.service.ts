@@ -17,12 +17,300 @@ export interface CreateMatchInput {
   reservationId: string;
 }
 
+export interface ResolveDisputeInput {
+  matchId: string;
+  adminId: string;
+  winnerTeam: MatchTeam;
+  reason: string;
+  evidenceIds: string[];
+  gamertagsVerified: boolean;
+}
+
 @Injectable()
 export class MatchesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly evidenceStorage: EvidenceStorageService,
   ) {}
+
+  async getDisputeReview(matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        id: true,
+        mode: true,
+        region: true,
+        status: true,
+        createdAt: true,
+        startedAt: true,
+        participants: {
+          select: {
+            team: true,
+            isCaptain: true,
+            playerProfileId: true,
+            playerProfile: {
+              select: {
+                gamertag: true,
+                country: true,
+              },
+            },
+          },
+          orderBy: [{ team: 'asc' }, { createdAt: 'asc' }],
+        },
+        resultReports: {
+          select: {
+            id: true,
+            captainId: true,
+            winnerTeam: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        disputeEvidences: {
+          select: {
+            id: true,
+            captainId: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    if (!match) {
+      throw new NotFoundException('Partida não encontrada.');
+    }
+
+    if (match.status !== MatchStatus.DISPUTED) {
+      throw new ConflictException('A partida não possui uma disputa pendente.');
+    }
+
+    return {
+      id: match.id,
+      mode: match.mode,
+      region: match.region,
+      status: match.status,
+      createdAt: match.createdAt,
+      startedAt: match.startedAt,
+      participants: match.participants.map((participant) => ({
+        playerProfileId: participant.playerProfileId,
+        gamertag: participant.playerProfile.gamertag,
+        country: participant.playerProfile.country,
+        team: participant.team,
+        isCaptain: participant.isCaptain,
+      })),
+      resultReports: match.resultReports,
+      disputeEvidences: match.disputeEvidences,
+    };
+  }
+
+  async resolveDispute(input: ResolveDisputeInput) {
+    const {
+      matchId,
+      adminId,
+      winnerTeam,
+      reason,
+      evidenceIds,
+      gamertagsVerified,
+    } = input;
+
+    if (!Object.values(MatchTeam).includes(winnerTeam)) {
+      throw new BadRequestException('Time vencedor inválido.');
+    }
+
+    if (
+      typeof reason !== 'string' ||
+      reason.trim().length < 10 ||
+      reason.trim().length > 2000
+    ) {
+      throw new BadRequestException(
+        'A justificativa deve conter entre 10 e 2000 caracteres.',
+      );
+    }
+
+    if (gamertagsVerified !== true) {
+      throw new BadRequestException(
+        'O administrador deve confirmar a conferência das oito gamertags.',
+      );
+    }
+
+    if (
+      !Array.isArray(evidenceIds) ||
+      evidenceIds.length === 0 ||
+      evidenceIds.some(
+        (id) => typeof id !== 'string' || id.trim().length === 0,
+      ) ||
+      new Set(evidenceIds).size !== evidenceIds.length
+    ) {
+      throw new BadRequestException(
+        'Informe os identificadores únicos das evidências analisadas.',
+      );
+    }
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        // Serializa decisões concorrentes sobre a mesma partida.
+        await tx.$queryRaw`
+          SELECT id
+          FROM "matches"
+          WHERE id = ${matchId}
+          FOR UPDATE
+        `;
+
+        const participantIds = await tx.matchParticipant.findMany({
+          where: { matchId },
+          select: { playerProfileId: true },
+        });
+
+        await this.lockPlayers(
+          tx,
+          participantIds.map((participant) => participant.playerProfileId),
+        );
+
+        const match = await tx.match.findUnique({
+          where: { id: matchId },
+          include: {
+            participants: {
+              include: {
+                playerProfile: {
+                  include: { rating: true },
+                },
+              },
+            },
+          },
+        });
+
+        if (!match) {
+          throw new NotFoundException('Partida não encontrada.');
+        }
+
+        if (match.status !== MatchStatus.DISPUTED) {
+          throw new ConflictException(
+            'Esta partida não está aguardando resolução de disputa.',
+          );
+        }
+
+        if (
+          match.participants.length !== 8 ||
+          match.participants.some(
+            (participant) => !participant.playerProfile.gamertag?.trim(),
+          )
+        ) {
+          throw new ConflictException(
+            'A partida deve possuir oito jogadores com gamertags cadastradas.',
+          );
+        }
+
+        const cogPlayers = match.participants.filter(
+          (participant) => participant.team === MatchTeam.COG,
+        );
+
+        const locustPlayers = match.participants.filter(
+          (participant) => participant.team === MatchTeam.LOCUST,
+        );
+
+        const uniquePlayerIds = new Set(
+          match.participants.map((participant) => participant.playerProfileId),
+        );
+
+        const uniqueGamertags = new Set(
+          match.participants.map((participant) =>
+            participant.playerProfile.gamertag!.trim().toLowerCase(),
+          ),
+        );
+
+        if (
+          cogPlayers.length !== 4 ||
+          locustPlayers.length !== 4 ||
+          uniquePlayerIds.size !== 8 ||
+          uniqueGamertags.size !== 8
+        ) {
+          throw new ConflictException(
+            'A partida deve possuir quatro jogadores por equipe, sem duplicações.',
+          );
+        }
+
+        const evidences = await tx.matchDisputeEvidence.findMany({
+          where: {
+            matchId,
+            id: { in: evidenceIds },
+          },
+          select: { id: true },
+        });
+
+        if (evidences.length !== evidenceIds.length) {
+          throw new BadRequestException(
+            'Uma ou mais evidências não pertencem à partida.',
+          );
+        }
+
+        const players = match.participants.map((participant) => ({
+          playerProfileId: participant.playerProfileId,
+          elo: participant.playerProfile.rating?.elo ?? 1000,
+          team: participant.team,
+        }));
+
+        const changes = calculateEloChanges(players, winnerTeam);
+
+        // A decisão e o ranking serão persistidos atomicamente.
+        const resolution = await tx.matchDisputeResolution.create({
+          data: {
+            matchId,
+            adminId,
+            winnerTeam,
+            reason: reason.trim(),
+            evidenceIds,
+            gamertagsVerified,
+          },
+        });
+
+        for (const change of changes) {
+          const participant = match.participants.find(
+            (item) => item.playerProfileId === change.playerProfileId,
+          );
+
+          if (!participant) {
+            throw new ConflictException('Jogador não encontrado na partida.');
+          }
+
+          const won = participant.team === winnerTeam;
+
+          await tx.playerRating.upsert({
+            where: { playerProfileId: change.playerProfileId },
+            create: {
+              playerProfileId: change.playerProfileId,
+              elo: change.newElo,
+              wins: won ? 1 : 0,
+              losses: won ? 0 : 1,
+              matches: 1,
+            },
+            update: {
+              elo: {
+                increment: change.newElo - change.previousElo,
+              },
+              wins: { increment: won ? 1 : 0 },
+              losses: { increment: won ? 0 : 1 },
+              matches: { increment: 1 },
+            },
+          });
+        }
+
+        await tx.match.update({
+          where: { id: matchId },
+          data: {
+            status: MatchStatus.COMPLETED,
+            completedAt: new Date(),
+          },
+        });
+
+        return resolution;
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
+  }
 
   async assertCanSubmitDisputeEvidence(
     matchId: string,

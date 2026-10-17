@@ -14,6 +14,7 @@ import {
   UseInterceptors,
   Res,
   StreamableFile,
+  ValidationPipe,
 } from '@nestjs/common';
 
 import { MatchesService } from './matches.service.js';
@@ -22,6 +23,7 @@ import { AdminGuard } from '../auth/guards/admin.guard.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
+import { ResolveDisputeDto } from './dto/resolve-dispute.dto.js';
 
 import {
   type AuthenticatedRequest,
@@ -67,6 +69,36 @@ export class MatchesController {
   @UseGuards(AdminGuard)
   async validateMatchResult(@Param('id', new ParseUUIDPipe()) matchId: string) {
     return this.matchesService.validateMatchResult(matchId);
+  }
+
+  @Get(':id/dispute-review')
+  @UseGuards(AdminGuard)
+  async getDisputeReview(@Param('id', new ParseUUIDPipe()) matchId: string) {
+    return this.matchesService.getDisputeReview(matchId);
+  }
+
+  @Patch(':id/resolve-dispute')
+  @UseGuards(AdminGuard)
+  async resolveDispute(
+    @Param('id', new ParseUUIDPipe()) matchId: string,
+    @Req() request: AuthenticatedRequest,
+    @Body(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    )
+    body: ResolveDisputeDto,
+  ) {
+    return this.matchesService.resolveDispute({
+      matchId,
+      adminId: request.user.id,
+      winnerTeam: body.winnerTeam,
+      reason: body.reason,
+      evidenceIds: body.evidenceIds,
+      gamertagsVerified: body.gamertagsVerified,
+    });
   }
 
   @Post(':id/dispute-evidences')

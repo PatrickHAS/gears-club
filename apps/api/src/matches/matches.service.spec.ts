@@ -31,6 +31,8 @@ describe('MatchesService', () => {
   const findFirstParticipantMock = vi.fn();
   const upsertPlayerRatingMock = vi.fn();
   const createDisputeEvidenceMock = vi.fn();
+  const findManyDisputeEvidenceMock = vi.fn();
+  const createDisputeResolutionMock = vi.fn();
   const findFirstDisputeEvidenceMock = vi.fn();
   const readEvidenceMock = vi.fn();
   const saveEvidenceMock = vi.fn();
@@ -63,6 +65,18 @@ describe('MatchesService', () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    findManyDisputeEvidenceMock.mockResolvedValue([]);
+
+    createDisputeResolutionMock.mockResolvedValue({
+      id: 'resolution-123',
+      matchId: 'match-123',
+      adminId: 'admin-123',
+      winnerTeam: MatchTeam.COG,
+      reason: 'Evidências verificadas pelo administrador.',
+      evidenceIds: ['evidence-123'],
+      gamertagsVerified: true,
+    });
+
     saveEvidenceMock.mockResolvedValue(
       '550e8400-e29b-41d4-a716-446655440001.png',
     );
@@ -119,6 +133,10 @@ describe('MatchesService', () => {
             matchDisputeEvidence: {
               create: createDisputeEvidenceMock,
               findFirst: findFirstDisputeEvidenceMock,
+              findMany: findManyDisputeEvidenceMock,
+            },
+            matchDisputeResolution: {
+              create: createDisputeResolutionMock,
             },
             matchParticipant: {
               findMany: findManyParticipantsMock,
@@ -1370,6 +1388,145 @@ describe('MatchesService', () => {
       ).rejects.toThrow(NotFoundException);
 
       expect(readEvidenceMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resolveDispute', () => {
+    const disputeInput = {
+      matchId: 'match-123',
+      adminId: 'admin-123',
+      winnerTeam: MatchTeam.COG,
+      reason: 'Os oito jogadores foram conferidos nas evidências.',
+      evidenceIds: ['evidence-123'],
+      gamertagsVerified: true,
+    };
+
+    it('deve registrar a decisão e atualizar o ranking dos 8 jogadores', async () => {
+      const participants = playerProfileIds.map((playerProfileId, index) => ({
+        playerProfileId,
+        team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+        playerProfile: {
+          gamertag: `Gamertag${index + 1}`,
+          rating: {
+            elo: 1000,
+          },
+        },
+      }));
+
+      findManyParticipantsMock.mockResolvedValue(
+        participants.map(({ playerProfileId }) => ({ playerProfileId })),
+      );
+
+      findUniqueMock.mockResolvedValue({
+        id: disputeInput.matchId,
+        status: 'DISPUTED',
+        participants,
+      });
+
+      findManyDisputeEvidenceMock.mockResolvedValue([{ id: 'evidence-123' }]);
+
+      upsertPlayerRatingMock.mockResolvedValue({});
+      updateMatchMock.mockResolvedValue({});
+
+      const result = await service.resolveDispute(disputeInput);
+
+      expect(createDisputeResolutionMock).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          matchId: disputeInput.matchId,
+          adminId: disputeInput.adminId,
+          winnerTeam: MatchTeam.COG,
+          evidenceIds: ['evidence-123'],
+          gamertagsVerified: true,
+        }),
+      });
+
+      expect(upsertPlayerRatingMock).toHaveBeenCalledTimes(8);
+
+      expect(updateMatchMock).toHaveBeenCalledWith({
+        where: { id: disputeInput.matchId },
+        data: expect.objectContaining({
+          status: 'COMPLETED',
+          completedAt: expect.any(Date),
+        }),
+      });
+
+      expect(result.id).toBe('resolution-123');
+    });
+
+    it('deve impedir a resolução de uma partida já concluída', async () => {
+      findManyParticipantsMock.mockResolvedValue(
+        playerProfileIds.map((playerProfileId) => ({
+          playerProfileId,
+        })),
+      );
+
+      findUniqueMock.mockResolvedValue({
+        id: disputeInput.matchId,
+        status: 'COMPLETED',
+        participants: [],
+      });
+
+      await expect(service.resolveDispute(disputeInput)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(createDisputeResolutionMock).not.toHaveBeenCalled();
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar evidências que não pertencem à partida', async () => {
+      const participants = playerProfileIds.map((playerProfileId, index) => ({
+        playerProfileId,
+        team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+        playerProfile: {
+          gamertag: `Gamertag${index + 1}`,
+          rating: { elo: 1000 },
+        },
+      }));
+
+      findManyParticipantsMock.mockResolvedValue(
+        participants.map(({ playerProfileId }) => ({ playerProfileId })),
+      );
+
+      findUniqueMock.mockResolvedValue({
+        id: disputeInput.matchId,
+        status: 'DISPUTED',
+        participants,
+      });
+
+      // Simula uma evidência inexistente ou de outra partida.
+      findManyDisputeEvidenceMock.mockResolvedValue([]);
+
+      await expect(service.resolveDispute(disputeInput)).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(findManyDisputeEvidenceMock).toHaveBeenCalledWith({
+        where: {
+          matchId: disputeInput.matchId,
+          id: { in: disputeInput.evidenceIds },
+        },
+        select: { id: true },
+      });
+
+      expect(createDisputeResolutionMock).not.toHaveBeenCalled();
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir a resolução sem confirmação das oito gamertags', async () => {
+      await expect(
+        service.resolveDispute({
+          ...disputeInput,
+          gamertagsVerified: false,
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(createDisputeResolutionMock).not.toHaveBeenCalled();
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
     });
   });
 });
