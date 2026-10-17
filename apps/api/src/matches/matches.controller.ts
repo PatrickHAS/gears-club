@@ -35,6 +35,12 @@ import {
 export class MatchesController {
   constructor(private readonly matchesService: MatchesService) {}
 
+  @Get('admin/disputes')
+  @UseGuards(AdminGuard)
+  async listPendingDisputes() {
+    return this.matchesService.listPendingDisputes();
+  }
+
   @Get(':id')
   async getMatchById(
     @Param('id', new ParseUUIDPipe()) matchId: string,

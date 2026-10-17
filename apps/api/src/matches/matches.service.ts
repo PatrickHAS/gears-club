@@ -33,6 +33,45 @@ export class MatchesService {
     private readonly evidenceStorage: EvidenceStorageService,
   ) {}
 
+  async listPendingDisputes() {
+    const matches = await this.prisma.match.findMany({
+      where: {
+        status: MatchStatus.DISPUTED,
+      },
+      select: {
+        id: true,
+        mode: true,
+        region: true,
+        status: true,
+        createdAt: true,
+        startedAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            participants: true,
+            resultReports: true,
+            disputeEvidences: true,
+          },
+        },
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: 50,
+    });
+
+    return matches.map((match) => ({
+      id: match.id,
+      mode: match.mode,
+      region: match.region,
+      status: match.status,
+      createdAt: match.createdAt,
+      startedAt: match.startedAt,
+      updatedAt: match.updatedAt,
+      participantsCount: match._count.participants,
+      reportsCount: match._count.resultReports,
+      evidencesCount: match._count.disputeEvidences,
+    }));
+  }
+
   async getDisputeReview(matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },

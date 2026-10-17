@@ -16,6 +16,7 @@ import { Login } from "./pages/Login";
 import { Register } from "./pages/Register";
 import { Profile } from "./pages/Profile";
 import Ranking from "./pages/Ranking";
+import { AdminDisputes } from "./pages/AdminDisputes";
 
 function HomeSection() {
   const location = useLocation();
@@ -41,7 +42,7 @@ function HomeSection() {
 
 function App() {
   const navigate = useNavigate();
-  const { isLoading, isAuthenticated } = useAuth();
+  const { isLoading, isAuthenticated, user } = useAuth();
 
   if (isLoading) {
     return (
@@ -84,6 +85,7 @@ function App() {
               onRankingClick={() => navigate("/ranking")}
               onMatchesClick={() => navigate("/#partidas")}
               onChampionshipsClick={() => navigate("/#campeonatos")}
+              onAdminClick={() => navigate("/admin/disputes")}
             />
 
             <Routes>
@@ -98,6 +100,19 @@ function App() {
                     <Profile onBack={() => navigate("/")} />
                   ) : (
                     <Navigate to="/login" replace />
+                  )
+                }
+              />
+
+              <Route
+                path="/admin/disputes"
+                element={
+                  !isAuthenticated ? (
+                    <Navigate to="/login" replace />
+                  ) : user?.role !== "ADMIN" ? (
+                    <Navigate to="/" replace />
+                  ) : (
+                    <AdminDisputes />
                   )
                 }
               />

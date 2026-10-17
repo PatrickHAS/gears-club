@@ -16,6 +16,7 @@ describe('MatchesService', () => {
   let service: MatchesService;
 
   const findManyMock = vi.fn();
+  const findManyMatchesMock = vi.fn();
   const findUniqueMock = vi.fn();
   const createMock = vi.fn();
   const transactionMock = vi.fn();
@@ -118,6 +119,7 @@ describe('MatchesService', () => {
               findMany: findManyMock,
             },
             match: {
+              findMany: findManyMatchesMock,
               findUnique: findUniqueMock,
               findFirst: findFirstMock,
               create: createMock,
@@ -1527,6 +1529,82 @@ describe('MatchesService', () => {
       expect(createDisputeResolutionMock).not.toHaveBeenCalled();
       expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
       expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listPendingDisputes', () => {
+    it('deve consultar somente disputas pendentes, em ordem e com limite', async () => {
+      findManyMatchesMock.mockResolvedValue([]);
+
+      const result = await service.listPendingDisputes();
+
+      expect(result).toEqual([]);
+
+      expect(findManyMatchesMock).toHaveBeenCalledExactlyOnceWith({
+        where: {
+          status: 'DISPUTED',
+        },
+        select: {
+          id: true,
+          mode: true,
+          region: true,
+          status: true,
+          createdAt: true,
+          startedAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              participants: true,
+              resultReports: true,
+              disputeEvidences: true,
+            },
+          },
+        },
+        orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+        take: 50,
+      });
+    });
+
+    it('deve retornar os dados necessários sem expor informações sensíveis', async () => {
+      const createdAt = new Date('2026-10-15T12:00:00.000Z');
+      const updatedAt = new Date('2026-10-16T12:00:00.000Z');
+
+      findManyMatchesMock.mockResolvedValue([
+        {
+          id: 'match-123',
+          mode: 'DEMOLITION',
+          region: 'BR',
+          status: 'DISPUTED',
+          createdAt,
+          startedAt: createdAt,
+          updatedAt,
+          _count: {
+            participants: 8,
+            resultReports: 2,
+            disputeEvidences: 2,
+          },
+        },
+      ]);
+
+      const result = await service.listPendingDisputes();
+
+      expect(result).toEqual([
+        {
+          id: 'match-123',
+          mode: 'DEMOLITION',
+          region: 'BR',
+          status: 'DISPUTED',
+          createdAt,
+          startedAt: createdAt,
+          updatedAt,
+          participantsCount: 8,
+          reportsCount: 2,
+          evidencesCount: 2,
+        },
+      ]);
+
+      expect(result[0]).not.toHaveProperty('imageKey');
+      expect(result[0]).not.toHaveProperty('_count');
     });
   });
 });

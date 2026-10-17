@@ -71,6 +71,7 @@ export class RefreshSessionService {
               id: true,
               username: true,
               email: true,
+              role: true,
             },
           },
         },

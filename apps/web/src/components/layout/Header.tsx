@@ -16,6 +16,7 @@ interface HeaderProps {
   onRankingClick: () => void;
   onMatchesClick: () => void;
   onChampionshipsClick: () => void;
+  onAdminClick: () => void;
 }
 
 export function Header({
@@ -26,6 +27,7 @@ export function Header({
   onRankingClick,
   onMatchesClick,
   onChampionshipsClick,
+  onAdminClick,
 }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -44,6 +46,11 @@ export function Header({
   function handleProfile() {
     setMenuOpen(false);
     onProfileClick();
+  }
+
+  function handleAdmin() {
+    setMenuOpen(false);
+    onAdminClick();
   }
 
   function handleHome() {
@@ -144,6 +151,16 @@ export function Header({
                   {user.username}
                 </span>
               </div>
+
+              {user.role === "ADMIN" && (
+                <button
+                  type="button"
+                  onClick={handleAdmin}
+                  className="rounded-lg border border-amber-700 bg-amber-950/30 px-4 py-2 text-sm font-semibold text-amber-400 transition hover:border-amber-500 hover:text-white"
+                >
+                  Administração
+                </button>
+              )}
 
               <button
                 type="button"
@@ -256,6 +273,16 @@ export function Header({
                       </p>
                     </div>
                   </div>
+
+                  {user.role === "ADMIN" && (
+                    <button
+                      type="button"
+                      onClick={handleAdmin}
+                      className="w-full rounded-lg border border-amber-700 bg-amber-950/30 px-4 py-3 text-left font-semibold text-amber-400 transition hover:border-amber-500 hover:text-white"
+                    >
+                      Administração
+                    </button>
+                  )}
 
                   <button
                     type="button"

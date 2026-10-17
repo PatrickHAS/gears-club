@@ -28,6 +28,7 @@ describe('PATCH /matches/:id/resolve-dispute (E2E)', () => {
 
   const resolveDisputeMock = vi.fn();
   const getDisputeReviewMock = vi.fn();
+  const listPendingDisputesMock = vi.fn();
   const verifyAsyncMock = vi.fn();
   const findUniqueUserMock = vi.fn();
 
@@ -49,6 +50,7 @@ describe('PATCH /matches/:id/resolve-dispute (E2E)', () => {
           useValue: {
             resolveDispute: resolveDisputeMock,
             getDisputeReview: getDisputeReviewMock,
+            listPendingDisputes: listPendingDisputesMock,
           },
         },
         {
@@ -104,6 +106,18 @@ describe('PATCH /matches/:id/resolve-dispute (E2E)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+
+    listPendingDisputesMock.mockResolvedValue([
+      {
+        id: matchId,
+        mode: 'DEMOLITION',
+        region: 'BR',
+        status: 'DISPUTED',
+        participantsCount: 8,
+        reportsCount: 2,
+        evidencesCount: 1,
+      },
+    ]);
 
     verifyAsyncMock.mockResolvedValue({ sub: adminId });
 
@@ -270,6 +284,53 @@ describe('PATCH /matches/:id/resolve-dispute (E2E)', () => {
       expect(response.body.disputeEvidences).toHaveLength(1);
 
       expect(JSON.stringify(response.body)).not.toContain('imageKey');
+    });
+  });
+
+  describe('GET /matches/admin/disputes', () => {
+    it('deve rejeitar acesso sem autenticação', async () => {
+      await request(app.getHttpServer())
+        .get('/matches/admin/disputes')
+        .expect(401);
+
+      expect(listPendingDisputesMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir acesso de jogador comum', async () => {
+      findUniqueUserMock.mockResolvedValue({
+        id: adminId,
+        username: 'test-player',
+        email: 'player@example.test',
+        role: UserRole.USER,
+      });
+
+      await request(app.getHttpServer())
+        .get('/matches/admin/disputes')
+        .set('Authorization', 'Bearer valid-test-token')
+        .expect(403);
+
+      expect(listPendingDisputesMock).not.toHaveBeenCalled();
+    });
+
+    it('deve permitir que administrador liste as disputas', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/matches/admin/disputes')
+        .set('Authorization', 'Bearer valid-test-token')
+        .expect(200);
+
+      expect(listPendingDisputesMock).toHaveBeenCalledOnce();
+
+      expect(response.body).toEqual([
+        {
+          id: matchId,
+          mode: 'DEMOLITION',
+          region: 'BR',
+          status: 'DISPUTED',
+          participantsCount: 8,
+          reportsCount: 2,
+          evidencesCount: 1,
+        },
+      ]);
     });
   });
 });
