@@ -9,11 +9,19 @@ import {
   Patch,
   UseGuards,
   ParseEnumPipe,
+  BadRequestException,
+  UploadedFile,
+  UseInterceptors,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 
 import { MatchesService } from './matches.service.js';
-import { MatchTeam } from '@prisma/client';
+import { MatchTeam, UserRole } from '@prisma/client';
 import { AdminGuard } from '../auth/guards/admin.guard.js';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
 
 import {
   type AuthenticatedRequest,
@@ -59,5 +67,58 @@ export class MatchesController {
   @UseGuards(AdminGuard)
   async validateMatchResult(@Param('id', new ParseUUIDPipe()) matchId: string) {
     return this.matchesService.validateMatchResult(matchId);
+  }
+
+  @Post(':id/dispute-evidences')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+        files: 1,
+      },
+    }),
+  )
+  async uploadDisputeEvidence(
+    @Param('id', new ParseUUIDPipe()) matchId: string,
+    @Req() request: AuthenticatedRequest,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Envie uma imagem no campo file.');
+    }
+
+    return this.matchesService.uploadDisputeEvidence(
+      matchId,
+      request.user.id,
+      file.buffer,
+    );
+  }
+
+  @Get(':id/dispute-evidences/:evidenceId/image')
+  async getDisputeEvidenceImage(
+    @Param('id', new ParseUUIDPipe()) matchId: string,
+    @Param('evidenceId', new ParseUUIDPipe()) evidenceId: string,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const isAdmin = request.user.role === UserRole.ADMIN;
+
+    const image = await this.matchesService.getDisputeEvidenceImage(
+      matchId,
+      evidenceId,
+      request.user.id,
+      isAdmin,
+    );
+
+    response.setHeader('Content-Type', 'image/png');
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader(
+      'Content-Disposition',
+      'inline; filename="evidencia.png"',
+    );
+
+    return new StreamableFile(image);
   }
 }

@@ -10,6 +10,7 @@ import { MatchTeam, Prisma } from '@prisma/client';
 
 import { MatchesService } from './matches.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { EvidenceStorageService } from './evidence-storage/evidence-storage.service.js';
 
 describe('MatchesService', () => {
   let service: MatchesService;
@@ -27,8 +28,13 @@ describe('MatchesService', () => {
   const findManyResultReportMock = vi.fn();
   const updateMatchMock = vi.fn();
   const findManyParticipantsMock = vi.fn();
+  const findFirstParticipantMock = vi.fn();
   const upsertPlayerRatingMock = vi.fn();
   const createDisputeEvidenceMock = vi.fn();
+  const findFirstDisputeEvidenceMock = vi.fn();
+  const readEvidenceMock = vi.fn();
+  const saveEvidenceMock = vi.fn();
+  const removeEvidenceMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -57,23 +63,39 @@ describe('MatchesService', () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    saveEvidenceMock.mockResolvedValue(
+      '550e8400-e29b-41d4-a716-446655440001.png',
+    );
+    findFirstDisputeEvidenceMock.mockResolvedValue(null);
+    readEvidenceMock.mockResolvedValue(Buffer.from('imagem-privada'));
+
+    removeEvidenceMock.mockResolvedValue(undefined);
     findFirstMock.mockResolvedValue(null);
     queryRawMock.mockResolvedValue([]);
     findUniqueMock.mockResolvedValue(null);
     findUniqueResultReportMock.mockResolvedValue(null);
     findManyResultReportMock.mockResolvedValue([]);
     findManyParticipantsMock.mockResolvedValue([]);
+    findFirstParticipantMock.mockResolvedValue(null);
     createDisputeEvidenceMock.mockResolvedValue({
       id: 'evidence-123',
       matchId: '550e8400-e29b-41d4-a716-446655440000',
       captainId: 'captain-profile-123',
-      imageKey: 'disputes/test-evidence.png',
+      imageKey: '550e8400-e29b-41d4-a716-446655440001.png',
       createdAt: new Date(),
     });
 
     const module = await Test.createTestingModule({
       providers: [
         MatchesService,
+        {
+          provide: EvidenceStorageService,
+          useValue: {
+            save: saveEvidenceMock,
+            read: readEvidenceMock,
+            remove: removeEvidenceMock,
+          },
+        },
         {
           provide: PrismaService,
 
@@ -96,9 +118,11 @@ describe('MatchesService', () => {
             },
             matchDisputeEvidence: {
               create: createDisputeEvidenceMock,
+              findFirst: findFirstDisputeEvidenceMock,
             },
             matchParticipant: {
               findMany: findManyParticipantsMock,
+              findFirst: findFirstParticipantMock,
             },
             playerRating: {
               upsert: upsertPlayerRatingMock,
@@ -1177,6 +1201,175 @@ describe('MatchesService', () => {
           imageKey,
         },
       });
+    });
+  });
+
+  describe('uploadDisputeEvidence', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+    const userId = 'captain-user-123';
+    const imageKey = '550e8400-e29b-41d4-a716-446655440001.png';
+    const file = Buffer.from('imagem-de-teste');
+
+    const disputedMatch = {
+      status: 'DISPUTED',
+      participants: [
+        {
+          playerProfileId: 'captain-profile-123',
+        },
+      ],
+    };
+
+    it('deve salvar e registrar a evidência de um capitão autorizado', async () => {
+      findUniqueMock.mockResolvedValue(disputedMatch);
+
+      const result = await service.uploadDisputeEvidence(matchId, userId, file);
+
+      expect(saveEvidenceMock).toHaveBeenCalledWith(file);
+
+      expect(createDisputeEvidenceMock).toHaveBeenCalledWith({
+        data: {
+          matchId,
+          captainId: 'captain-profile-123',
+          imageKey,
+        },
+      });
+
+      expect(result).toMatchObject({
+        imageKey,
+      });
+
+      expect(removeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('não deve salvar arquivos de jogadores não autorizados', async () => {
+      findUniqueMock.mockResolvedValue({
+        status: 'DISPUTED',
+        participants: [],
+      });
+
+      await expect(
+        service.uploadDisputeEvidence(matchId, userId, file),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(saveEvidenceMock).not.toHaveBeenCalled();
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('não deve salvar arquivos de partidas fora de disputa', async () => {
+      findUniqueMock.mockResolvedValue({
+        ...disputedMatch,
+        status: 'IN_PROGRESS',
+      });
+
+      await expect(
+        service.uploadDisputeEvidence(matchId, userId, file),
+      ).rejects.toThrow(ConflictException);
+
+      expect(saveEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve remover o arquivo quando o banco falhar', async () => {
+      findUniqueMock.mockResolvedValue(disputedMatch);
+
+      createDisputeEvidenceMock.mockRejectedValue(
+        new Error('Falha no PostgreSQL'),
+      );
+
+      await expect(
+        service.uploadDisputeEvidence(matchId, userId, file),
+      ).rejects.toThrow('Falha no PostgreSQL');
+
+      expect(saveEvidenceMock).toHaveBeenCalledWith(file);
+      expect(removeEvidenceMock).toHaveBeenCalledWith(imageKey);
+    });
+
+    it('deve remover o arquivo se a partida mudar de status', async () => {
+      findUniqueMock
+        .mockResolvedValueOnce(disputedMatch)
+        .mockResolvedValueOnce({
+          ...disputedMatch,
+          status: 'COMPLETED',
+        });
+
+      await expect(
+        service.uploadDisputeEvidence(matchId, userId, file),
+      ).rejects.toThrow(ConflictException);
+
+      expect(saveEvidenceMock).toHaveBeenCalledWith(file);
+      expect(removeEvidenceMock).toHaveBeenCalledWith(imageKey);
+      expect(createDisputeEvidenceMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getDisputeEvidenceImage', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+    const evidenceId = '550e8400-e29b-41d4-a716-446655440002';
+    const userId = 'user-123';
+    const imageKey = '550e8400-e29b-41d4-a716-446655440001.png';
+
+    const evidence = { imageKey };
+
+    it('deve permitir que um participante visualize a evidência', async () => {
+      findFirstDisputeEvidenceMock.mockResolvedValue(evidence);
+      findFirstParticipantMock.mockResolvedValue({
+        id: 'participant-123',
+      });
+
+      const result = await service.getDisputeEvidenceImage(
+        matchId,
+        evidenceId,
+        userId,
+      );
+
+      expect(result).toEqual(Buffer.from('imagem-privada'));
+
+      expect(findFirstDisputeEvidenceMock).toHaveBeenCalledWith({
+        where: {
+          id: evidenceId,
+          matchId,
+        },
+        select: {
+          imageKey: true,
+        },
+      });
+
+      expect(readEvidenceMock).toHaveBeenCalledExactlyOnceWith(imageKey);
+    });
+
+    it('deve impedir jogadores que não participam da partida', async () => {
+      findFirstDisputeEvidenceMock.mockResolvedValue(evidence);
+      findFirstParticipantMock.mockResolvedValue(null);
+
+      await expect(
+        service.getDisputeEvidenceImage(matchId, evidenceId, userId),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(readEvidenceMock).not.toHaveBeenCalled();
+    });
+
+    it('deve permitir que um administrador visualize a evidência', async () => {
+      findFirstDisputeEvidenceMock.mockResolvedValue(evidence);
+
+      const result = await service.getDisputeEvidenceImage(
+        matchId,
+        evidenceId,
+        'admin-user-123',
+        true,
+      );
+
+      expect(result).toEqual(Buffer.from('imagem-privada'));
+      expect(findFirstMock).not.toHaveBeenCalled();
+      expect(readEvidenceMock).toHaveBeenCalledWith(imageKey);
+    });
+
+    it('deve retornar 404 quando a evidência não existe', async () => {
+      findFirstDisputeEvidenceMock.mockResolvedValue(null);
+
+      await expect(
+        service.getDisputeEvidenceImage(matchId, evidenceId, userId),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(readEvidenceMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -9,6 +9,7 @@ import { MatchStatus, MatchTeam, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 import { calculateEloChanges } from './elo-calculator.js';
+import { EvidenceStorageService } from './evidence-storage/evidence-storage.service.js';
 
 export interface CreateMatchInput {
   playerProfileIds: string[];
@@ -18,7 +19,117 @@ export interface CreateMatchInput {
 
 @Injectable()
 export class MatchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly evidenceStorage: EvidenceStorageService,
+  ) {}
+
+  async assertCanSubmitDisputeEvidence(
+    matchId: string,
+    userId: string,
+  ): Promise<void> {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: {
+        status: true,
+        participants: {
+          where: {
+            isCaptain: true,
+            playerProfile: {
+              userId,
+            },
+          },
+          select: {
+            playerProfileId: true,
+          },
+          take: 1,
+        },
+      },
+    });
+
+    if (!match) {
+      throw new NotFoundException('Partida não encontrada.');
+    }
+
+    if (match.participants.length === 0) {
+      throw new ForbiddenException(
+        'Somente os capitães podem enviar evidências.',
+      );
+    }
+
+    if (match.status !== MatchStatus.DISPUTED) {
+      throw new ConflictException('A partida não está em disputa.');
+    }
+  }
+
+  async getDisputeEvidenceImage(
+    matchId: string,
+    evidenceId: string,
+    userId: string,
+    isAdmin = false,
+  ): Promise<Buffer> {
+    const evidence = await this.prisma.matchDisputeEvidence.findFirst({
+      where: {
+        id: evidenceId,
+        matchId,
+      },
+      select: {
+        imageKey: true,
+      },
+    });
+
+    if (!evidence) {
+      throw new NotFoundException('Evidência não encontrada.');
+    }
+
+    if (!isAdmin) {
+      const participant = await this.prisma.matchParticipant.findFirst({
+        where: {
+          matchId,
+          playerProfile: {
+            userId,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!participant) {
+        throw new ForbiddenException(
+          'Você não tem permissão para visualizar esta evidência.',
+        );
+      }
+    }
+
+    return this.evidenceStorage.read(evidence.imageKey);
+  }
+
+  async uploadDisputeEvidence(matchId: string, userId: string, file: Buffer) {
+    // Impede o processamento de arquivos enviados
+    // por jogadores sem autorização.
+    await this.assertCanSubmitDisputeEvidence(matchId, userId);
+
+    // O serviço valida, normaliza e salva a imagem.
+    const imageKey = await this.evidenceStorage.save(file);
+
+    try {
+      // Revalida as permissões dentro da transação.
+      return await this.submitDisputeEvidence(matchId, userId, imageKey);
+    } catch (error) {
+      // Evita deixar arquivos órfãos quando
+      // o registro no banco de dados falha.
+      try {
+        await this.evidenceStorage.remove(imageKey);
+      } catch {
+        // Preserva o erro original do banco.
+        // Uma falha na limpeza precisará ser registrada
+        // e tratada por uma rotina de reconciliação.
+      }
+
+      throw error;
+    }
+  }
 
   async getMatchById(matchId: string, userId: string) {
     const match = await this.prisma.match.findUnique({
