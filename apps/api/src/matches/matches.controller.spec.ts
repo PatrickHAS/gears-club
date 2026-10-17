@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
-import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 
 import { MatchesController } from './matches.controller.js';
 import { MatchesService } from './matches.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
 import { MatchTeam } from '@prisma/client';
+import { AdminGuard } from '../auth/guards/admin.guard.js';
 
 describe('MatchesController', () => {
   let controller: MatchesController;
@@ -13,6 +14,7 @@ describe('MatchesController', () => {
   const getMatchByIdMock = vi.fn();
   const startMatchMock = vi.fn();
   const reportResultMock = vi.fn();
+  const validateMatchResultMock = vi.fn();
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -26,6 +28,7 @@ describe('MatchesController', () => {
             getMatchById: getMatchByIdMock,
             startMatch: startMatchMock,
             reportResult: reportResultMock,
+            validateMatchResult: validateMatchResultMock,
           },
         },
       ],
@@ -140,5 +143,41 @@ describe('MatchesController', () => {
       'captain-user-123',
       MatchTeam.COG,
     );
+  });
+
+  it('deve exigir AdminGuard para homologar partidas', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      MatchesController.prototype.validateMatchResult,
+    ) as unknown[];
+
+    expect(guards).toContain(AdminGuard);
+  });
+
+  it('deve utilizar a rota :id/validate para homologação', () => {
+    const path = Reflect.getMetadata(
+      PATH_METADATA,
+      MatchesController.prototype.validateMatchResult,
+    );
+
+    expect(path).toBe(':id/validate');
+  });
+
+  it('deve chamar o serviço para homologar a partida', async () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+
+    const validatedMatch = {
+      id: matchId,
+      status: 'COMPLETED',
+      completedAt: new Date(),
+    };
+
+    validateMatchResultMock.mockResolvedValue(validatedMatch);
+
+    const result = await controller.validateMatchResult(matchId);
+
+    expect(result).toEqual(validatedMatch);
+
+    expect(validateMatchResultMock).toHaveBeenCalledExactlyOnceWith(matchId);
   });
 });

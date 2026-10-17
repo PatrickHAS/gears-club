@@ -26,6 +26,8 @@ describe('MatchesService', () => {
   const createResultReportMock = vi.fn();
   const findManyResultReportMock = vi.fn();
   const updateMatchMock = vi.fn();
+  const findManyParticipantsMock = vi.fn();
+  const upsertPlayerRatingMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -59,6 +61,7 @@ describe('MatchesService', () => {
     findUniqueMock.mockResolvedValue(null);
     findUniqueResultReportMock.mockResolvedValue(null);
     findManyResultReportMock.mockResolvedValue([]);
+    findManyParticipantsMock.mockResolvedValue([]);
 
     const module = await Test.createTestingModule({
       providers: [
@@ -82,6 +85,12 @@ describe('MatchesService', () => {
               findUnique: findUniqueResultReportMock,
               findMany: findManyResultReportMock,
               create: createResultReportMock,
+            },
+            matchParticipant: {
+              findMany: findManyParticipantsMock,
+            },
+            playerRating: {
+              upsert: upsertPlayerRatingMock,
             },
             $queryRaw: queryRawMock,
             $transaction: transactionMock,
@@ -791,6 +800,208 @@ describe('MatchesService', () => {
 
       expect(transactionMock).not.toHaveBeenCalled();
       expect(createResultReportMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('validateMatchResult', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+
+    it('deve retornar 404 quando a partida não existe', async () => {
+      findUniqueMock.mockResolvedValue(null);
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar partida que não aguarda homologação', async () => {
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'IN_PROGRESS',
+        participants: [],
+        resultReports: [],
+      });
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar partida já homologada', async () => {
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'COMPLETED',
+        participants: [],
+        resultReports: [],
+      });
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar partida com reportes divergentes', async () => {
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'AWAITING_VALIDATION',
+        participants: [],
+        resultReports: [
+          { winnerTeam: MatchTeam.COG },
+          { winnerTeam: MatchTeam.LOCUST },
+        ],
+      });
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar partida com apenas um reporte', async () => {
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'AWAITING_VALIDATION',
+        participants: [],
+        resultReports: [{ winnerTeam: MatchTeam.COG }],
+      });
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(upsertPlayerRatingMock).not.toHaveBeenCalled();
+      expect(updateMatchMock).not.toHaveBeenCalled();
+    });
+
+    it('deve homologar a partida e atualizar o ranking dos 8 jogadores', async () => {
+      const participants = playerProfileIds.map((playerProfileId, index) => ({
+        playerProfileId,
+        team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+        playerProfile: {
+          rating: {
+            elo: 1000,
+            wins: 0,
+            losses: 0,
+            matches: 0,
+          },
+        },
+      }));
+
+      findManyParticipantsMock.mockResolvedValue(
+        participants.map(({ playerProfileId }) => ({ playerProfileId })),
+      );
+
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'AWAITING_VALIDATION',
+        participants,
+        resultReports: [
+          { captainId: playerProfileIds[0], winnerTeam: MatchTeam.COG },
+          { captainId: playerProfileIds[4], winnerTeam: MatchTeam.COG },
+        ],
+      });
+
+      upsertPlayerRatingMock.mockResolvedValue({});
+      updateMatchMock.mockResolvedValue({
+        id: matchId,
+        status: 'COMPLETED',
+        completedAt: new Date(),
+      });
+
+      const result = await service.validateMatchResult(matchId);
+
+      expect(result.status).toBe('COMPLETED');
+      expect(upsertPlayerRatingMock).toHaveBeenCalledTimes(8);
+
+      for (const [index, playerProfileId] of playerProfileIds.entries()) {
+        const won = index < 4;
+
+        expect(upsertPlayerRatingMock).toHaveBeenCalledWith({
+          where: { playerProfileId },
+          create: {
+            playerProfileId,
+            elo: won ? 1016 : 984,
+            wins: won ? 1 : 0,
+            losses: won ? 0 : 1,
+            matches: 1,
+          },
+          update: {
+            elo: { increment: won ? 16 : -16 },
+            wins: { increment: won ? 1 : 0 },
+            losses: { increment: won ? 0 : 1 },
+            matches: { increment: 1 },
+          },
+        });
+      }
+
+      expect(updateMatchMock).toHaveBeenCalledWith({
+        where: { id: matchId },
+        data: {
+          status: 'COMPLETED',
+          completedAt: expect.any(Date),
+        },
+      });
+
+      // O bloqueio da partida e dos 8 jogadores ocorre antes
+      // da leitura dos rankings.
+      expect(queryRawMock).toHaveBeenCalledTimes(9);
+
+      const lastLockOrder = queryRawMock.mock.invocationCallOrder[8];
+      const matchReadOrder = findUniqueMock.mock.invocationCallOrder[0];
+
+      expect(lastLockOrder).toBeLessThan(matchReadOrder);
+    });
+
+    it('não deve concluir a partida se a atualização do ranking falhar', async () => {
+      const participants = playerProfileIds.map((playerProfileId, index) => ({
+        playerProfileId,
+        team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+        playerProfile: {
+          rating: { elo: 1000 },
+        },
+      }));
+
+      findManyParticipantsMock.mockResolvedValue(
+        participants.map(({ playerProfileId }) => ({ playerProfileId })),
+      );
+
+      findUniqueMock.mockResolvedValue({
+        id: matchId,
+        status: 'AWAITING_VALIDATION',
+        participants,
+        resultReports: [
+          { captainId: playerProfileIds[0], winnerTeam: MatchTeam.COG },
+          { captainId: playerProfileIds[4], winnerTeam: MatchTeam.COG },
+        ],
+      });
+
+      // Simula uma falha ao atualizar o quinto jogador.
+      upsertPlayerRatingMock
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error('Falha no PostgreSQL'));
+
+      await expect(service.validateMatchResult(matchId)).rejects.toThrow(
+        'Falha no PostgreSQL',
+      );
+
+      expect(upsertPlayerRatingMock).toHaveBeenCalledTimes(5);
+
+      // A partida não pode ser marcada como concluída.
+      expect(updateMatchMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
-import { MatchTeam } from '@prisma/client';
+import { MatchTeam, UserRole } from '@prisma/client';
 import request from 'supertest';
 import {
   afterAll,
@@ -17,6 +17,7 @@ import { MatchesController } from '../src/matches/matches.controller.js';
 import { MatchesService } from '../src/matches/matches.service.js';
 import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
+import { AdminGuard } from '../src/auth/guards/admin.guard.js';
 
 describe('POST /matches/:id/result-reports (E2E)', () => {
   let app: INestApplication;
@@ -25,6 +26,7 @@ describe('POST /matches/:id/result-reports (E2E)', () => {
   const userId = 'authenticated-user-123';
 
   const reportResultMock = vi.fn();
+  const validateMatchResultMock = vi.fn();
   const verifyAsyncMock = vi.fn();
   const findUniqueUserMock = vi.fn();
 
@@ -33,10 +35,12 @@ describe('POST /matches/:id/result-reports (E2E)', () => {
       controllers: [MatchesController],
       providers: [
         JwtAuthGuard,
+        AdminGuard,
         {
           provide: MatchesService,
           useValue: {
             reportResult: reportResultMock,
+            validateMatchResult: validateMatchResultMock,
           },
         },
         {
@@ -69,12 +73,18 @@ describe('POST /matches/:id/result-reports (E2E)', () => {
       id: userId,
       username: 'test-captain',
       email: 'captain@example.test',
+      role: UserRole.USER,
     });
 
     reportResultMock.mockResolvedValue({
       id: 'report-123',
       matchId,
       winnerTeam: MatchTeam.COG,
+    });
+
+    validateMatchResultMock.mockResolvedValue({
+      id: matchId,
+      status: 'COMPLETED',
     });
   });
 
@@ -131,5 +141,59 @@ describe('POST /matches/:id/result-reports (E2E)', () => {
       userId,
       MatchTeam.COG,
     );
+  });
+
+  it('deve rejeitar homologação sem token JWT', async () => {
+    await request(app.getHttpServer())
+      .patch(`/matches/${matchId}/validate`)
+      .expect(401);
+
+    expect(validateMatchResultMock).not.toHaveBeenCalled();
+  });
+
+  it('deve impedir jogador comum de homologar partidas', async () => {
+    await request(app.getHttpServer())
+      .patch(`/matches/${matchId}/validate`)
+      .set('Authorization', 'Bearer valid-test-token')
+      .expect(403);
+
+    expect(validateMatchResultMock).not.toHaveBeenCalled();
+  });
+
+  it('deve permitir homologação por administrador', async () => {
+    findUniqueUserMock.mockResolvedValue({
+      id: userId,
+      username: 'test-admin',
+      email: 'admin@example.test',
+      role: UserRole.ADMIN,
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch(`/matches/${matchId}/validate`)
+      .set('Authorization', 'Bearer valid-test-token')
+      .expect(200);
+
+    expect(response.body).toEqual({
+      id: matchId,
+      status: 'COMPLETED',
+    });
+
+    expect(validateMatchResultMock).toHaveBeenCalledExactlyOnceWith(matchId);
+  });
+
+  it('deve rejeitar UUID inválido na homologação', async () => {
+    findUniqueUserMock.mockResolvedValue({
+      id: userId,
+      username: 'test-admin',
+      email: 'admin@example.test',
+      role: UserRole.ADMIN,
+    });
+
+    await request(app.getHttpServer())
+      .patch('/matches/invalid-id/validate')
+      .set('Authorization', 'Bearer valid-test-token')
+      .expect(400);
+
+    expect(validateMatchResultMock).not.toHaveBeenCalled();
   });
 });

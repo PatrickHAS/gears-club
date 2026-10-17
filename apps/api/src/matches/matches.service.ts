@@ -8,6 +8,7 @@ import {
 import { MatchStatus, MatchTeam, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
+import { calculateEloChanges } from './elo-calculator.js';
 
 export interface CreateMatchInput {
   playerProfileIds: string[];
@@ -211,6 +212,116 @@ export class MatchesService {
 
       return report;
     });
+  }
+
+  async validateMatchResult(matchId: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        // Impede duas homologações simultâneas da mesma partida.
+        await tx.$queryRaw`
+        SELECT id
+        FROM "matches"
+        WHERE id = ${matchId}
+        FOR UPDATE
+      `;
+
+        const participantIds = await tx.matchParticipant.findMany({
+          where: { matchId },
+          select: { playerProfileId: true },
+        });
+
+        // Bloqueia os jogadores em ordem fixa para evitar deadlocks.
+        await this.lockPlayers(
+          tx,
+          participantIds.map((participant) => participant.playerProfileId),
+        );
+
+        const match = await tx.match.findUnique({
+          where: { id: matchId },
+          include: {
+            participants: {
+              include: {
+                playerProfile: {
+                  include: { rating: true },
+                },
+              },
+            },
+            resultReports: true,
+          },
+        });
+
+        if (!match) {
+          throw new NotFoundException('Partida não encontrada.');
+        }
+
+        if (match.status !== MatchStatus.AWAITING_VALIDATION) {
+          throw new ConflictException(
+            'Esta partida não está aguardando homologação.',
+          );
+        }
+
+        if (
+          match.resultReports.length !== 2 ||
+          match.resultReports[0].winnerTeam !==
+            match.resultReports[1].winnerTeam
+        ) {
+          throw new ConflictException(
+            'Os resultados dos capitães não estão confirmados.',
+          );
+        }
+
+        const winnerTeam = match.resultReports[0].winnerTeam;
+
+        const players = match.participants.map((participant) => ({
+          playerProfileId: participant.playerProfileId,
+          elo: participant.playerProfile.rating?.elo ?? 1000,
+          team: participant.team,
+        }));
+
+        const changes = calculateEloChanges(players, winnerTeam);
+
+        for (const change of changes) {
+          const participant = match.participants.find(
+            (item) => item.playerProfileId === change.playerProfileId,
+          );
+
+          if (!participant) {
+            throw new ConflictException('Jogador não encontrado na partida.');
+          }
+
+          const won = participant.team === winnerTeam;
+
+          await tx.playerRating.upsert({
+            where: { playerProfileId: change.playerProfileId },
+            create: {
+              playerProfileId: change.playerProfileId,
+              elo: change.newElo,
+              wins: won ? 1 : 0,
+              losses: won ? 0 : 1,
+              matches: 1,
+            },
+            update: {
+              elo: { increment: change.newElo - change.previousElo },
+              wins: { increment: won ? 1 : 0 },
+              losses: { increment: won ? 0 : 1 },
+              matches: { increment: 1 },
+            },
+          });
+        }
+
+        return tx.match.update({
+          where: { id: matchId },
+          data: {
+            status: MatchStatus.COMPLETED,
+            completedAt: new Date(),
+          },
+        });
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
   }
 
   private async lockPlayers(

@@ -13,6 +13,7 @@ import {
 
 import { MatchesService } from './matches.service.js';
 import { MatchTeam } from '@prisma/client';
+import { AdminGuard } from '../auth/guards/admin.guard.js';
 
 import {
   type AuthenticatedRequest,
@@ -52,5 +53,11 @@ export class MatchesController {
       request.user.id,
       winnerTeam,
     );
+  }
+
+  @Patch(':id/validate')
+  @UseGuards(AdminGuard)
+  async validateMatchResult(@Param('id', new ParseUUIDPipe()) matchId: string) {
+    return this.matchesService.validateMatchResult(matchId);
   }
 }

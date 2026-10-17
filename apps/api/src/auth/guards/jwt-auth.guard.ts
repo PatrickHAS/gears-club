@@ -8,11 +8,13 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { UserRole } from '@prisma/client';
 
 export interface AuthenticatedUser {
   id: string;
   username: string;
   email: string;
+  role: UserRole;
 }
 
 export interface AuthenticatedRequest extends Request {
@@ -56,6 +58,7 @@ export class JwtAuthGuard implements CanActivate {
           id: true,
           username: true,
           email: true,
+          role: true,
         },
       });
 
