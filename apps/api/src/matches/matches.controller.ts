@@ -1,14 +1,18 @@
 import {
   Controller,
+  Body,
+  Post,
   Get,
   Param,
   ParseUUIDPipe,
   Req,
   Patch,
   UseGuards,
+  ParseEnumPipe,
 } from '@nestjs/common';
 
 import { MatchesService } from './matches.service.js';
+import { MatchTeam } from '@prisma/client';
 
 import {
   type AuthenticatedRequest,
@@ -34,5 +38,19 @@ export class MatchesController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.matchesService.startMatch(matchId, request.user.id);
+  }
+
+  @Post(':id/result-reports')
+  async reportResult(
+    @Param('id', new ParseUUIDPipe()) matchId: string,
+    @Body('winnerTeam', new ParseEnumPipe(MatchTeam))
+    winnerTeam: MatchTeam,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.matchesService.reportResult(
+      matchId,
+      request.user.id,
+      winnerTeam,
+    );
   }
 }

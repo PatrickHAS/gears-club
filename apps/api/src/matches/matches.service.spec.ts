@@ -22,6 +22,8 @@ describe('MatchesService', () => {
   const findFirstMock = vi.fn();
   const updateManyMock = vi.fn();
   const findUniqueOrThrowMock = vi.fn();
+  const findUniqueResultReportMock = vi.fn();
+  const createResultReportMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -53,6 +55,7 @@ describe('MatchesService', () => {
     findFirstMock.mockResolvedValue(null);
     queryRawMock.mockResolvedValue([]);
     findUniqueMock.mockResolvedValue(null);
+    findUniqueResultReportMock.mockResolvedValue(null);
 
     const module = await Test.createTestingModule({
       providers: [
@@ -70,6 +73,10 @@ describe('MatchesService', () => {
               create: createMock,
               updateMany: updateManyMock,
               findUniqueOrThrow: findUniqueOrThrowMock,
+            },
+            matchResultReport: {
+              findUnique: findUniqueResultReportMock,
+              create: createResultReportMock,
             },
             $queryRaw: queryRawMock,
             $transaction: transactionMock,
@@ -517,6 +524,139 @@ describe('MatchesService', () => {
       );
 
       expect(findUniqueOrThrowMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reportResult', () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+    const captainUserId = 'user-captain';
+    const captainProfileId = 'profile-captain';
+
+    const matchInProgress = {
+      id: matchId,
+      status: 'IN_PROGRESS',
+      participants: [{ playerProfileId: captainProfileId }],
+    };
+
+    it('deve bloquear a partida antes de consultar e criar o reporte', async () => {
+      findUniqueMock.mockResolvedValue(matchInProgress);
+
+      createResultReportMock.mockResolvedValue({
+        id: 'report-123',
+        matchId,
+        captainId: captainProfileId,
+        winnerTeam: MatchTeam.COG,
+      });
+
+      await service.reportResult(matchId, captainUserId, MatchTeam.COG);
+
+      expect(queryRawMock).toHaveBeenCalledOnce();
+      expect(findUniqueMock).toHaveBeenCalledOnce();
+      expect(findUniqueResultReportMock).toHaveBeenCalledOnce();
+      expect(createResultReportMock).toHaveBeenCalledOnce();
+
+      const lockOrder = queryRawMock.mock.invocationCallOrder[0];
+      const matchLookupOrder = findUniqueMock.mock.invocationCallOrder[0];
+      const reportLookupOrder =
+        findUniqueResultReportMock.mock.invocationCallOrder[0];
+      const createOrder = createResultReportMock.mock.invocationCallOrder[0];
+
+      expect(lockOrder).toBeLessThan(matchLookupOrder);
+      expect(matchLookupOrder).toBeLessThan(reportLookupOrder);
+      expect(reportLookupOrder).toBeLessThan(createOrder);
+    });
+
+    it('deve permitir que um capitão reporte o vencedor', async () => {
+      findUniqueMock.mockResolvedValue(matchInProgress);
+
+      const report = {
+        id: 'report-123',
+        matchId,
+        captainId: captainProfileId,
+        winnerTeam: MatchTeam.COG,
+      };
+
+      createResultReportMock.mockResolvedValue(report);
+
+      const result = await service.reportResult(
+        matchId,
+        captainUserId,
+        MatchTeam.COG,
+      );
+
+      expect(result).toEqual(report);
+      expect(transactionMock).toHaveBeenCalledOnce();
+      expect(queryRawMock).toHaveBeenCalledOnce();
+
+      expect(createResultReportMock).toHaveBeenCalledWith({
+        data: {
+          matchId,
+          captainId: captainProfileId,
+          winnerTeam: MatchTeam.COG,
+        },
+      });
+    });
+
+    it('deve impedir jogadores que não são capitães', async () => {
+      findUniqueMock.mockResolvedValue({
+        ...matchInProgress,
+        participants: [],
+      });
+
+      await expect(
+        service.reportResult(matchId, 'user-common', MatchTeam.COG),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(createResultReportMock).not.toHaveBeenCalled();
+    });
+
+    it('deve retornar 404 para partida inexistente', async () => {
+      findUniqueMock.mockResolvedValue(null);
+
+      await expect(
+        service.reportResult(matchId, captainUserId, MatchTeam.COG),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(createResultReportMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir reporte de partida que não está em andamento', async () => {
+      findUniqueMock.mockResolvedValue({
+        ...matchInProgress,
+        status: 'PENDING',
+      });
+
+      await expect(
+        service.reportResult(matchId, captainUserId, MatchTeam.COG),
+      ).rejects.toThrow(ConflictException);
+
+      expect(createResultReportMock).not.toHaveBeenCalled();
+    });
+
+    it('deve impedir que o capitão reporte duas vezes', async () => {
+      findUniqueMock.mockResolvedValue(matchInProgress);
+
+      findUniqueResultReportMock.mockResolvedValue({
+        id: 'existing-report',
+        matchId,
+        captainId: captainProfileId,
+        winnerTeam: MatchTeam.LOCUST,
+      });
+
+      await expect(
+        service.reportResult(matchId, captainUserId, MatchTeam.COG),
+      ).rejects.toThrow(ConflictException);
+
+      expect(createResultReportMock).not.toHaveBeenCalled();
+    });
+
+    it('deve rejeitar um vencedor inválido', async () => {
+      await expect(
+        service.reportResult(matchId, captainUserId, 'INVALID' as MatchTeam),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(transactionMock).not.toHaveBeenCalled();
+      expect(createResultReportMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -55,6 +55,7 @@ model PlayerProfile {
   rating             PlayerRating?
   matchmakingRegions PlayerMatchmakingRegion[]
   matchParticipants  MatchParticipant[]
+  matchResultReports MatchResultReport[]
 
   @@map("player_profiles")
 }
@@ -122,6 +123,7 @@ model Match {
   completedAt DateTime?
 
   participants MatchParticipant[]
+  resultReports MatchResultReport[]
 
   @@index([status, createdAt])
   @@index([region])
@@ -148,5 +150,26 @@ model MatchParticipant {
   @@index([playerProfileId])
   @@index([matchId, team])
   @@map("match_participants")
+}
+
+
+model MatchResultReport {
+  id String @id @default(uuid())
+
+  matchId String
+  captainId String
+
+  winnerTeam MatchTeam
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  captain PlayerProfile @relation(fields: [captainId], references: [id], onDelete: Restrict)
+
+  @@unique([matchId, captainId])
+  @@index([matchId])
+  @@map("match_result_reports")
 }
 

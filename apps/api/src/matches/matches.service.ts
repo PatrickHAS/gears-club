@@ -5,7 +5,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { MatchTeam, Prisma } from '@prisma/client';
+import { MatchStatus, MatchTeam, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -111,6 +111,80 @@ export class MatchesService {
       include: {
         participants: true,
       },
+    });
+  }
+
+  async reportResult(matchId: string, userId: string, winnerTeam: MatchTeam) {
+    if (winnerTeam !== MatchTeam.COG && winnerTeam !== MatchTeam.LOCUST) {
+      throw new BadRequestException('O vencedor deve ser COG ou LOCUST.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Serializa reportes concorrentes da mesma partida.
+      await tx.$queryRaw`
+      SELECT id
+      FROM "matches"
+      WHERE id = ${matchId}
+      FOR UPDATE
+    `;
+
+      const match = await tx.match.findUnique({
+        where: { id: matchId },
+        select: {
+          id: true,
+          status: true,
+          participants: {
+            where: {
+              isCaptain: true,
+              playerProfile: {
+                userId,
+              },
+            },
+            select: {
+              playerProfileId: true,
+            },
+          },
+        },
+      });
+
+      if (!match) {
+        throw new NotFoundException('Partida não encontrada.');
+      }
+
+      if (match.participants.length === 0) {
+        throw new ForbiddenException(
+          'Somente os capitães podem reportar resultados.',
+        );
+      }
+
+      if (match.status !== MatchStatus.IN_PROGRESS) {
+        throw new ConflictException('A partida não está em andamento.');
+      }
+
+      const captainId = match.participants[0].playerProfileId;
+
+      const existingReport = await tx.matchResultReport.findUnique({
+        where: {
+          matchId_captainId: {
+            matchId,
+            captainId,
+          },
+        },
+      });
+
+      if (existingReport) {
+        throw new ConflictException(
+          'Você já reportou o resultado desta partida.',
+        );
+      }
+
+      return tx.matchResultReport.create({
+        data: {
+          matchId,
+          captainId,
+          winnerTeam,
+        },
+      });
     });
   }
 

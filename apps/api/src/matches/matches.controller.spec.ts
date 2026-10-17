@@ -5,12 +5,14 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { MatchesController } from './matches.controller.js';
 import { MatchesService } from './matches.service.js';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard.js';
+import { MatchTeam } from '@prisma/client';
 
 describe('MatchesController', () => {
   let controller: MatchesController;
 
   const getMatchByIdMock = vi.fn();
   const startMatchMock = vi.fn();
+  const reportResultMock = vi.fn();
 
   beforeEach(async () => {
     vi.resetAllMocks();
@@ -23,6 +25,7 @@ describe('MatchesController', () => {
           useValue: {
             getMatchById: getMatchByIdMock,
             startMatch: startMatchMock,
+            reportResult: reportResultMock,
           },
         },
       ],
@@ -103,6 +106,39 @@ describe('MatchesController', () => {
     expect(startMatchMock).toHaveBeenCalledExactlyOnceWith(
       matchId,
       'captain-user-123',
+    );
+  });
+
+  it('deve reportar o resultado usando o usuário autenticado', async () => {
+    const matchId = '550e8400-e29b-41d4-a716-446655440000';
+
+    const request = {
+      user: {
+        id: 'captain-user-123',
+      },
+    };
+
+    const report = {
+      id: 'report-123',
+      matchId,
+      captainId: 'captain-profile-123',
+      winnerTeam: MatchTeam.COG,
+    };
+
+    reportResultMock.mockResolvedValue(report);
+
+    const result = await controller.reportResult(
+      matchId,
+      MatchTeam.COG,
+      request as Parameters<MatchesController['reportResult']>[2],
+    );
+
+    expect(result).toEqual(report);
+
+    expect(reportResultMock).toHaveBeenCalledExactlyOnceWith(
+      matchId,
+      'captain-user-123',
+      MatchTeam.COG,
     );
   });
 });
