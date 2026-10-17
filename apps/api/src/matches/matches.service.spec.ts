@@ -12,6 +12,9 @@ describe('MatchesService', () => {
   const findManyMock = vi.fn();
   const findUniqueMock = vi.fn();
   const createMock = vi.fn();
+  const transactionMock = vi.fn();
+  const queryRawMock = vi.fn();
+  const findFirstMock = vi.fn();
 
   const reservationId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -40,6 +43,8 @@ describe('MatchesService', () => {
 
   beforeEach(async () => {
     vi.resetAllMocks();
+    findFirstMock.mockResolvedValue(null);
+    queryRawMock.mockResolvedValue([]);
 
     findUniqueMock.mockResolvedValue(null);
 
@@ -48,18 +53,27 @@ describe('MatchesService', () => {
         MatchesService,
         {
           provide: PrismaService,
+
           useValue: {
             playerProfile: {
               findMany: findManyMock,
             },
             match: {
               findUnique: findUniqueMock,
+              findFirst: findFirstMock,
               create: createMock,
             },
+            $queryRaw: queryRawMock,
+            $transaction: transactionMock,
           },
         },
       ],
     }).compile();
+
+    transactionMock.mockImplementation(
+      async (callback: (tx: PrismaService) => Promise<unknown>) =>
+        callback(module.get(PrismaService)),
+    );
 
     service = module.get(MatchesService);
   });
@@ -181,6 +195,7 @@ describe('MatchesService', () => {
 
     findUniqueMock
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(existingMatch);
 
     createMock.mockRejectedValue(
@@ -197,7 +212,7 @@ describe('MatchesService', () => {
 
     expect(result).toEqual(existingMatch);
     expect(createMock).toHaveBeenCalledOnce();
-    expect(findUniqueMock).toHaveBeenCalledTimes(2);
+    expect(findUniqueMock).toHaveBeenCalledTimes(3);
   });
 
   it('deve rejeitar reserva existente com região diferente', async () => {
@@ -240,5 +255,62 @@ describe('MatchesService', () => {
     );
 
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('deve impedir a criação quando um jogador já possui partida ativa', async () => {
+    findManyMock.mockResolvedValue(playerProfileIds.map((id) => ({ id })));
+
+    findFirstMock.mockResolvedValue({
+      id: 'partida-ativa-123',
+    });
+
+    await expect(service.createMatch(input)).rejects.toThrow(
+      'Um ou mais jogadores já possuem uma partida ativa.',
+    );
+
+    expect(findFirstMock).toHaveBeenCalledWith({
+      where: {
+        status: {
+          in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+        },
+        participants: {
+          some: {
+            playerProfileId: {
+              in: playerProfileIds,
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    expect(queryRawMock).toHaveBeenCalledTimes(8);
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('deve criar a partida somente após verificar os bloqueios e partidas ativas', async () => {
+    findManyMock.mockResolvedValue(playerProfileIds.map((id) => ({ id })));
+
+    findFirstMock.mockResolvedValue(null);
+    createMock.mockResolvedValue(existingMatch);
+
+    const result = await service.createMatch(input);
+
+    expect(result).toEqual(existingMatch);
+    expect(transactionMock).toHaveBeenCalledOnce();
+    expect(queryRawMock).toHaveBeenCalledTimes(8);
+    expect(findFirstMock).toHaveBeenCalledOnce();
+    expect(createMock).toHaveBeenCalledOnce();
+
+    const lastLockOrder = queryRawMock.mock.invocationCallOrder[7];
+
+    const activeMatchCheckOrder = findFirstMock.mock.invocationCallOrder[0];
+
+    const createOrder = createMock.mock.invocationCallOrder[0];
+
+    expect(lastLockOrder).toBeLessThan(activeMatchCheckOrder);
+    expect(activeMatchCheckOrder).toBeLessThan(createOrder);
   });
 });

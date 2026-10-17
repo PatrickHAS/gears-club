@@ -67,6 +67,39 @@ export class MatchmakingQueueService {
   async join(userId: string): Promise<QueueEntry> {
     await this.validatePlayerProfile(userId);
 
+    // Impede que jogadores com partidas ativas entrem novamente na fila.
+    let activeMatch;
+
+    try {
+      activeMatch = await this.prisma.match.findFirst({
+        where: {
+          status: {
+            in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+          },
+          participants: {
+            some: {
+              playerProfile: {
+                userId,
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+    } catch {
+      throw new ServiceUnavailableException(
+        'Não foi possível verificar suas partidas ativas.',
+      );
+    }
+
+    if (activeMatch) {
+      throw new ConflictException(
+        'Você já possui uma partida ativa. Finalize-a antes de entrar na fila.',
+      );
+    }
+
     const entry: QueueEntry = {
       userId,
       joinedAt: new Date().toISOString(),
@@ -261,6 +294,15 @@ export class MatchmakingQueueService {
       where: {
         userId: {
           in: activeQueue.map((entry) => entry.userId),
+        },
+        matchParticipants: {
+          none: {
+            match: {
+              status: {
+                in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+              },
+            },
+          },
         },
       },
       select: {

@@ -11,11 +11,14 @@ describe('MatchmakingQueueService', () => {
   const evalMock = vi.fn();
   const findManyMock = vi.fn();
   const findUniqueMock = vi.fn();
+  const findFirstMatchMock = vi.fn();
 
   beforeEach(async () => {
     evalMock.mockReset();
     findManyMock.mockReset();
     findUniqueMock.mockReset();
+    findFirstMatchMock.mockReset();
+    findFirstMatchMock.mockResolvedValue(null);
 
     const module = await Test.createTestingModule({
       providers: [
@@ -34,6 +37,9 @@ describe('MatchmakingQueueService', () => {
             playerProfile: {
               findMany: findManyMock,
               findUnique: findUniqueMock,
+            },
+            match: {
+              findFirst: findFirstMatchMock,
             },
           },
         },
@@ -357,5 +363,142 @@ describe('MatchmakingQueueService', () => {
     await expect(
       service.releaseReservation(userIds, 'reserva-123'),
     ).rejects.toThrow('Não foi possível liberar a reserva de matchmaking.');
+  });
+
+  it('deve impedir entrada na fila quando o jogador possui partida ativa', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    findFirstMatchMock.mockResolvedValue({
+      id: 'match-123',
+    });
+
+    await expect(service.join('user-br')).rejects.toThrow(
+      'Você já possui uma partida ativa. Finalize-a antes de entrar na fila.',
+    );
+
+    expect(findFirstMatchMock).toHaveBeenCalledWith({
+      where: {
+        status: {
+          in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+        },
+        participants: {
+          some: {
+            playerProfile: {
+              userId: 'user-br',
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    expect(evalMock).not.toHaveBeenCalled();
+  });
+
+  it('deve bloquear a entrada na fila quando o PostgreSQL estiver indisponível', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    findFirstMatchMock.mockRejectedValue(new Error('PostgreSQL indisponível'));
+
+    await expect(service.join('user-br')).rejects.toThrow(
+      'Não foi possível verificar suas partidas ativas.',
+    );
+
+    expect(findFirstMatchMock).toHaveBeenCalledOnce();
+    expect(evalMock).not.toHaveBeenCalled();
+  });
+
+  it('deve permitir entrada quando não houver partidas bloqueantes', async () => {
+    findUniqueMock.mockResolvedValue({
+      gamertag: 'PlayerBR',
+      country: 'BR',
+    });
+
+    // Partidas COMPLETED e CANCELLED não são retornadas
+    // pela consulta que filtra apenas estados bloqueantes.
+    findFirstMatchMock.mockResolvedValue(null);
+    evalMock.mockResolvedValue(1);
+
+    const result = await service.join('user-br');
+
+    expect(result.userId).toBe('user-br');
+
+    expect(findFirstMatchMock).toHaveBeenCalledWith({
+      where: {
+        status: {
+          in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+        },
+        participants: {
+          some: {
+            playerProfile: {
+              userId: 'user-br',
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    expect(evalMock).toHaveBeenCalledOnce();
+  });
+
+  it('deve excluir da seleção jogadores com partidas ativas', async () => {
+    const entries = [
+      {
+        userId: 'user-disponivel',
+        joinedAt: '2026-10-16T18:00:00.000Z',
+      },
+      {
+        userId: 'user-em-partida',
+        joinedAt: '2026-10-16T18:01:00.000Z',
+      },
+    ];
+
+    evalMock.mockResolvedValue(entries.map((entry) => JSON.stringify(entry)));
+
+    // Simula o Prisma retornando apenas o jogador disponível.
+    findManyMock.mockResolvedValue([
+      {
+        userId: 'user-disponivel',
+        gamertag: 'PlayerBR',
+        country: 'BR',
+        rating: { elo: 1200 },
+        matchmakingRegions: [],
+      },
+    ]);
+
+    const candidates = await service.getCandidates();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].userId).toBe('user-disponivel');
+
+    expect(findManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: {
+            in: ['user-disponivel', 'user-em-partida'],
+          },
+          matchParticipants: {
+            none: {
+              match: {
+                status: {
+                  in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
   });
 });

@@ -13,6 +13,25 @@ export interface CreateMatchInput {
 export class MatchesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async lockPlayers(
+    tx: Prisma.TransactionClient,
+    playerProfileIds: string[],
+  ): Promise<void> {
+    // A ordem fixa evita deadlocks entre partidas concorrentes.
+    const sortedIds = [...playerProfileIds].sort();
+
+    for (const playerProfileId of sortedIds) {
+      await tx.$queryRaw`
+        SELECT 1 AS locked
+        FROM (
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${playerProfileId}, 0)
+          )
+        ) AS player_lock
+      `;
+    }
+  }
+
   async createMatch(input: CreateMatchInput) {
     const { playerProfileIds, region, reservationId } = input;
 
@@ -64,22 +83,72 @@ export class MatchesService {
     }
 
     try {
-      return await this.prisma.match.create({
-        data: {
-          reservationId,
-          mode: 'DEMOLITION',
-          region,
-          participants: {
-            create: playerProfileIds.map((playerProfileId, index) => ({
-              playerProfileId,
-              team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
-            })),
-          },
+      return await this.prisma.$transaction(
+        async (tx) => {
+          // Bloqueia os oito jogadores durante a transação.
+          await this.lockPlayers(tx, playerProfileIds);
+
+          // Verifica novamente a reserva após adquirir os bloqueios.
+          const matchByReservation = await tx.match.findUnique({
+            where: { reservationId },
+            include: { participants: true },
+          });
+
+          if (matchByReservation) {
+            this.validateExistingMatch(
+              matchByReservation,
+              playerProfileIds,
+              region,
+            );
+
+            return matchByReservation;
+          }
+
+          // Impede jogadores de participarem de duas partidas ativas.
+          const activeMatch = await tx.match.findFirst({
+            where: {
+              status: {
+                in: ['PENDING', 'IN_PROGRESS', 'DISPUTED'],
+              },
+              participants: {
+                some: {
+                  playerProfileId: {
+                    in: playerProfileIds,
+                  },
+                },
+              },
+            },
+            select: { id: true },
+          });
+
+          if (activeMatch) {
+            throw new BadRequestException(
+              'Um ou mais jogadores já possuem uma partida ativa.',
+            );
+          }
+
+          return tx.match.create({
+            data: {
+              reservationId,
+              mode: 'DEMOLITION',
+              region,
+              participants: {
+                create: playerProfileIds.map((playerProfileId, index) => ({
+                  playerProfileId,
+                  team: index < 4 ? MatchTeam.COG : MatchTeam.LOCUST,
+                })),
+              },
+            },
+            include: { participants: true },
+          });
         },
-        include: { participants: true },
-      });
+        {
+          maxWait: 10000,
+          timeout: 30000,
+        },
+      );
     } catch (error) {
-      // Outra requisição pode ter criado a mesma reserva.
+      // Preserva a recuperação idempotente por reservationId.
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
