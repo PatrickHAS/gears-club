@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { MatchTeam, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -12,6 +17,44 @@ export interface CreateMatchInput {
 @Injectable()
 export class MatchesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getMatchById(matchId: string, userId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: {
+        id: matchId,
+      },
+      include: {
+        participants: {
+          include: {
+            playerProfile: {
+              select: {
+                id: true,
+                userId: true,
+                gamertag: true,
+                country: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!match) {
+      throw new NotFoundException('Partida não encontrada.');
+    }
+
+    const isParticipant = match.participants.some(
+      (participant) => participant.playerProfile.userId === userId,
+    );
+
+    if (!isParticipant) {
+      throw new ForbiddenException(
+        'Você não possui permissão para visualizar esta partida.',
+      );
+    }
+
+    return match;
+  }
 
   private async lockPlayers(
     tx: Prisma.TransactionClient,

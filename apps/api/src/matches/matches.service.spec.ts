@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { MatchTeam, Prisma } from '@prisma/client';
 
 import { MatchesService } from './matches.service.js';
@@ -312,5 +316,67 @@ describe('MatchesService', () => {
 
     expect(lastLockOrder).toBeLessThan(activeMatchCheckOrder);
     expect(activeMatchCheckOrder).toBeLessThan(createOrder);
+  });
+
+  describe('getMatchById', () => {
+    const matchId = 'match-123';
+    const participantUserId = 'user-1';
+
+    const matchWithProfiles = {
+      ...existingMatch,
+      participants: existingMatch.participants.map((participant, index) => ({
+        ...participant,
+        playerProfile: {
+          id: participant.playerProfileId,
+          userId: `user-${index + 1}`,
+          gamertag: `Player${index + 1}`,
+          country: 'BR',
+        },
+      })),
+    };
+
+    it('deve permitir que um participante consulte sua partida', async () => {
+      findUniqueMock.mockResolvedValue(matchWithProfiles);
+
+      const result = await service.getMatchById(matchId, participantUserId);
+
+      expect(result).toEqual(matchWithProfiles);
+
+      expect(findUniqueMock).toHaveBeenCalledWith({
+        where: {
+          id: matchId,
+        },
+        include: {
+          participants: {
+            include: {
+              playerProfile: {
+                select: {
+                  id: true,
+                  userId: true,
+                  gamertag: true,
+                  country: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+
+    it('deve impedir acesso de usuários que não participam', async () => {
+      findUniqueMock.mockResolvedValue(matchWithProfiles);
+
+      await expect(
+        service.getMatchById(matchId, 'usuario-externo'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('deve retornar 404 quando a partida não existe', async () => {
+      findUniqueMock.mockResolvedValue(null);
+
+      await expect(
+        service.getMatchById('partida-inexistente', participantUserId),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 });
